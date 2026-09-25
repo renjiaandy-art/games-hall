@@ -284,8 +284,8 @@
     render();
     if (game.over) { uiBusy = false; showEnd(); return; }
     if (forcedAdvance || !extraRoll) advanceTurn();
-    updateStatusForTurn();
     uiBusy = false;
+    updateStatusForTurn();
     maybeAutoRollAI();
   }
   function maybeAutoRollAI() {

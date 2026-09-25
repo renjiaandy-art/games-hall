@@ -148,7 +148,7 @@
   function goToBetting() {
     round = null; bet = 0;
     $('actionRow').style.display = 'none';
-    if (chips <= 0) {
+    if (chips < 10) {
       $('resetRecord').textContent = recText();
       $('resetOv').classList.remove('hidden');
       return;
