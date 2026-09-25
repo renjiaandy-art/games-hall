@@ -104,7 +104,7 @@
     prevFire = fk;
 
     if (isDown) { fireCd -= dt; if (fireCd <= 0) { fire(aim); fireCd = 0.32; } }
-    if (coins <= 0) { coins = 200; RJ.toast('金币耗尽，免费补给 200 枚'); }
+    if (coins < shotCost) { coins += 200; RJ.toast('金币耗尽，免费补给 200 枚'); }
 
     spawnT -= dt;
     if (spawnT <= 0) { spawnFish(); spawnT = RJ.rand(0.55, 1.1); }

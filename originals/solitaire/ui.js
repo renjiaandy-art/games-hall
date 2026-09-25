@@ -187,8 +187,9 @@
   }
 
   function doDraw() {
+    var snap = cloneState();
     var ok = mode === 'f' ? false : S.Klondike.draw(state);
-    if (ok) render();
+    if (ok) { pushHistory(snap); render(); }
   }
 
   function smartMove(sel) {
