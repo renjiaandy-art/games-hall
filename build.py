@@ -194,7 +194,7 @@ grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);gap:6px;t
 function key(k,c){['keydown','keyup'].forEach(function(t,i){setTimeout(function(){
 var e=new KeyboardEvent(t,{key:k,code:k,bubbles:true,cancelable:true});
 try{Object.defineProperty(e,'keyCode',{get:function(){return c}});Object.defineProperty(e,'which',{get:function(){return c}});}catch(_){}
-(document.activeElement&&document.activeElement!==document.body?document.activeElement:document).dispatchEvent(e);},i*60);});}
+var rp=document.querySelector('ruffle-player,ruffle-object');if(rp&&rp.focus)rp.focus();(rp||(document.activeElement&&document.activeElement!==document.body?document.activeElement:document)).dispatchEvent(e);},i*60);});}
 document.querySelectorAll('#rj-dpad button,#rj-dpad-extra button').forEach(function(b){
 b.addEventListener('touchstart',function(ev){ev.preventDefault();key(b.dataset.k,+b.dataset.c);},{passive:false});
 b.addEventListener('click',function(){key(b.dataset.k,+b.dataset.c);});});
@@ -216,7 +216,91 @@ def patch_dpad(dest, game):
     return ["index.html: on-screen d-pad + swipe for touch devices" + (f" (+{[x[0] for x in game.get('dpad_extra', [])]})" if game.get("dpad_extra") else "")]
 
 
+RUFFLE_WRAPPER = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>__TITLE__</title>
+<style>
+html,body{margin:0;height:100%;background:#111;color:#fff;font-family:-apple-system,"PingFang SC",sans-serif;overflow:hidden}
+#bar{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;gap:12px;align-items:center;padding:calc(env(safe-area-inset-top) + 6px) 12px 6px;
+background:linear-gradient(#000a,#0000);font-size:13px}
+#bar a{color:#fff;text-decoration:none;opacity:.85} #bar span{opacity:.6}
+#stage{position:absolute;inset:0;padding-top:calc(env(safe-area-inset-top) + 30px)}
+ruffle-player,ruffle-object{width:100%;height:100%;display:block}
+</style></head><body>
+<div id="bar"><a href="../">‹ 游戏大厅</a><span>__TITLE__ · Flash（Ruffle 模拟）· <a href="https://github.com/__UPSTREAM__" target="_blank" rel="noopener">源码</a>（__LICENSE__）</span></div>
+<div id="stage"></div>
+<script>window.RufflePlayer=window.RufflePlayer||{};window.RufflePlayer.config={publicPath:"__RUFFLE__",autoplay:"on",unmuteOverlay:"hidden",letterbox:"on",splashScreen:true,warnOnUnsupportedContent:false,contextMenu:"rightClickOnly",showSwfDownload:false};</script>
+<script src="__RUFFLE__ruffle.js"></script>
+<script>
+window.addEventListener("load",function(){var r=window.RufflePlayer.newest();var p=r.createPlayer();document.getElementById("stage").appendChild(p);
+p.ruffle().load({url:"__SWF__",base:"./"});p.focus&&p.focus();});
+</script>
+</body></html>
+"""
+
+FLASH_PLAYER = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Flash 播放器</title>
+<style>
+body{margin:0;min-height:100vh;color:#fff;font-family:-apple-system,"PingFang SC",sans-serif;background:linear-gradient(160deg,#2a1a5e,#1a2a6e) fixed}
+.wrap{max-width:900px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 16px) 16px 30px}
+a{color:#fff} h1{font-size:24px;margin:10px 0 4px} p{opacity:.8;font-size:14px;line-height:1.6}
+.card{margin:14px 0;padding:14px;border-radius:18px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);
+-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input[type=url]{flex:1;min-width:200px;height:40px;border-radius:12px;border:1px solid rgba(255,255,255,.4);background:rgba(0,0,0,.2);color:#fff;padding:0 12px;font-size:15px}
+button,label.btn{height:40px;padding:0 16px;border-radius:12px;border:0;background:#0a84ff;color:#fff;font-size:15px;font-weight:600;display:inline-flex;align-items:center;cursor:pointer}
+input[type=file]{display:none}
+#stage{margin-top:14px;height:70vh;min-height:320px;border-radius:14px;overflow:hidden;background:#000;display:none}
+ruffle-player{width:100%;height:100%;display:block}
+</style></head><body><div class="wrap">
+<a href="../">‹ 游戏大厅</a>
+<h1>⚡ Flash 播放器</h1>
+<p>用开源的 <a href="https://ruffle.rs" target="_blank" rel="noopener">Ruffle</a> 在浏览器里运行 Flash 游戏（.swf），不用装 Flash 插件，手机也能用。
+选的文件只在你自己的浏览器里运行，不会上传到任何地方。</p>
+<div class="card"><div class="row">
+<label class="btn" for="file">打开本机的 .swf 文件</label><input type="file" id="file" accept=".swf,application/x-shockwave-flash">
+</div>
+<div class="row" style="margin-top:10px"><input type="url" id="url" placeholder="或者粘贴一个 .swf 链接"><button id="go">播放</button></div>
+<p style="font-size:12.5px;margin:10px 0 0">提示：粘贴链接时，对方网站要允许跨域访问才能加载；不行的话就先把 .swf 下载到手机/电脑，再用上面的按钮打开。</p></div>
+<div id="stage"></div>
+</div>
+<script>window.RufflePlayer=window.RufflePlayer||{};window.RufflePlayer.config={publicPath:"./ruffle/",autoplay:"on",unmuteOverlay:"hidden",letterbox:"on",warnOnUnsupportedContent:false};</script>
+<script src="./ruffle/ruffle.js"></script>
+<script>
+var player=null;function stage(){var s=document.getElementById("stage");s.style.display="block";if(!player){player=window.RufflePlayer.newest().createPlayer();s.appendChild(player);}s.scrollIntoView({behavior:"smooth"});return player;}
+document.getElementById("file").addEventListener("change",function(e){var f=e.target.files[0];if(!f)return;f.arrayBuffer().then(function(b){stage().ruffle().load({data:new Uint8Array(b),swfFileName:f.name});});});
+document.getElementById("go").addEventListener("click",function(){var u=document.getElementById("url").value.trim();if(!/^https?:\\/\\//i.test(u)){alert("请输入 http(s):// 开头的 .swf 链接");return;}stage().ruffle().load({url:u});});
+</script></body></html>
+"""
+
+
+def fetch_ruffle():
+    """Latest Ruffle self-hosted build (MIT/Apache-2.0) into site/flash/ruffle/, shared by all Flash games."""
+    dest = SITE / "flash" / "ruffle"
+    if dest.exists():
+        return
+    tmp = WORK / "ruffle"
+    tmp.mkdir(parents=True, exist_ok=True)
+    run("gh release download --repo ruffle-rs/ruffle --pattern '*web-selfhosted.zip' --dir . --clobber "
+        "$(gh release list --repo ruffle-rs/ruffle --limit 1 --json tagName -q '.[0].tagName')", tmp)
+    run("unzip -q -o *web-selfhosted.zip -d out", tmp)
+    shutil.copytree(tmp / "out", dest)
+    (SITE / "flash" / "index.html").write_text(FLASH_PLAYER, encoding="utf-8")
+
+
+def patch_flash_wrapper(dest, game):
+    fetch_ruffle()
+    page = (RUFFLE_WRAPPER.replace("__TITLE__", html.escape(game["name"])).replace("__SWF__", game["swf"])
+            .replace("__RUFFLE__", "../flash/ruffle/").replace("__UPSTREAM__", game["upstream"]).replace("__LICENSE__", game["license"]))
+    (dest / "index.html").write_text(page, encoding="utf-8")
+    return [f"index.html: Ruffle wrapper for {game['swf']}"]
+
+
 PATCHES = {
+    "flash": patch_flash_wrapper,
     "dpad": patch_dpad,
     "dino_touch": patch_dino_touch,
     "minesweeper": patch_minesweeper,
@@ -323,6 +407,9 @@ def main():
             print(f"!! {g['slug']} FAILED: {e}", flush=True)
             report.append({"slug": g["slug"], "error": str(e)})
             shutil.rmtree(SITE / g["slug"], ignore_errors=True)
+    if (SITE / "flash" / "index.html").exists():
+        ok.append({"slug": "flash", "name": "Flash 播放器", "desc": "打开自己的 .swf 小游戏（Ruffle）", "icon": "⚡",
+                   "upstream": "ruffle-rs/ruffle", "license": "MIT/Apache-2.0"})
     cards = "".join(
         f'<a class="card" href="{g["slug"]}/{g.get("entry", "")}"><div class="icon">{g["icon"]}</div>'
         f'<div class="name">{html.escape(g["name"])}</div><div class="desc">{html.escape(g["desc"])}</div></a>'

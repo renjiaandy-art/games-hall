@@ -359,5 +359,79 @@
   "dir": ".",
   "license": "MIT",
   "upstream": "jackrugile/radius-raid-js13k"
+ },
+ {
+  "slug": "ending",
+  "name": "Ending",
+  "desc": "Flash 解谜 Roguelike，每一步都要算清楚",
+  "icon": "🗝️",
+  "repo": "Ending",
+  "ref": "master",
+  "dir": "bin",
+  "include": [
+   "game.swf"
+  ],
+  "swf": "game.swf",
+  "patch": [
+   "flash",
+   "dpad"
+  ],
+  "license": "GPL-2.0",
+  "upstream": "st33d/Ending",
+  "kind": "flash"
+ },
+ {
+  "slug": "5b",
+  "name": "BFDIA 5b",
+  "desc": "carykh 的 Flash 解谜平台跳跃",
+  "icon": "🟨",
+  "repo": "5b",
+  "ref": "main",
+  "dir": ".",
+  "include": [
+   "5b.swf"
+  ],
+  "swf": "5b.swf",
+  "patch": [
+   "flash",
+   "dpad"
+  ],
+  "dpad_extra": [
+   [
+    "空格",
+    " ",
+    32
+   ]
+  ],
+  "license": "GPL-3.0",
+  "upstream": "carykh/5b",
+  "kind": "flash"
+ },
+ {
+  "slug": "asteroids",
+  "name": "小行星",
+  "desc": "Flash 经典 Asteroids 太空射击",
+  "icon": "☄️",
+  "repo": "EntityAsteroids",
+  "ref": "master",
+  "dir": "bin",
+  "include": [
+   "entity_asteroids.swf"
+  ],
+  "swf": "entity_asteroids.swf",
+  "patch": [
+   "flash",
+   "dpad"
+  ],
+  "dpad_extra": [
+   [
+    "开火",
+    " ",
+    32
+   ]
+  ],
+  "license": "MIT",
+  "upstream": "iainlobb/EntityAsteroids",
+  "kind": "flash"
  }
 ]
