@@ -88,7 +88,7 @@
     if (state !== 'playing') return;
     const col = Math.max(0, Math.min(COLS - 1, Math.floor(p.x / COLW)));
     let target = null;
-    for (const t of tiles) if (t.col === col && !t.hit && t.y < H && t.y + TILE_H > -40) { if (!target || t.y < target.y) target = t; }
+    for (const t of tiles) if (t.col === col && !t.hit && t.y < H && t.y + TILE_H > -40) { if (!target || t.y > target.y) target = t; }
     if (target) handleHit(target);
     else failNow('踩到白块了');
   }

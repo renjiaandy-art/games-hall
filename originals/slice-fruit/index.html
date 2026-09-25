@@ -77,7 +77,7 @@
 
   function endGame() {
     running = false;
-    RJ.over({ title: '游戏结束', sub: `本局共切开了不少水果`, score, win: score >= 60 });
+    RJ.over({ title: '游戏结束', sub: score > 0 ? `本局切开了 ${score} 分的水果` : `一个都没切到，再试一次`, score, win: score >= 60 });
   }
 
   function sliceHit(it) {
