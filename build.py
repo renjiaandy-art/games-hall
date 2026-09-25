@@ -28,9 +28,24 @@ EXT_LINK = re.compile(r"<link\b[^>]*href=[\"'][^\"']*passer-by\.com[^\"']*[\"'][
 SKIP = {".git", ".github", "node_modules", ".gitignore", ".gitattributes"}
 
 
-def run(cmd, cwd):
+def run(cmd, cwd, env=None):
     print(f"  $ {cmd}", flush=True)
-    subprocess.run(cmd, cwd=cwd, shell=True, check=True)
+    subprocess.run(cmd, cwd=cwd, shell=True, check=True, env=env)
+
+
+def node_env(major):
+    """PATH with an official Node.js <major>.x prepended (some games need a newer Node than the runner's)."""
+    import os
+    base = WORK / f"node{major}"
+    if not base.exists():
+        base.mkdir(parents=True)
+        run(f"curl -sSfL https://nodejs.org/dist/latest-v{major}.x/SHASUMS256.txt -o SHASUMS256.txt && "
+            f"F=$(grep -o 'node-v[0-9.]*-linux-x64.tar.xz' SHASUMS256.txt | head -1) && "
+            f"curl -sSfLO https://nodejs.org/dist/latest-v{major}.x/$F && grep \" $F$\" SHASUMS256.txt | sha256sum -c - && "
+            f"tar -xJf $F --strip-components=1 && rm $F", base)
+    env = dict(os.environ)
+    env["PATH"] = f"{base / 'bin'}:{env['PATH']}"
+    return env
 
 
 def sanitize_html_text(s):
@@ -160,7 +175,49 @@ def patch_dino_touch(dest, game):
     return ["index.js: any touch device counts as mobile (iPadOS fix)", "index.html: Chinese start hint, tap also dismisses it"]
 
 
+DPAD = """<style id="rj-dpad-css">
+#rj-dpad{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom) + 14px);z-index:99999;display:none;
+grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);gap:6px;touch-action:none;user-select:none;-webkit-user-select:none}
+#rj-dpad button{border:0;border-radius:16px;background:rgba(255,255,255,.28);color:#fff;font-size:22px;
+-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);box-shadow:0 4px 14px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.5)}
+#rj-dpad button:active{background:rgba(255,255,255,.5)}
+#rj-dpad-extra{position:fixed;left:14px;bottom:calc(env(safe-area-inset-bottom) + 14px);z-index:99999;display:none;gap:8px}
+#rj-dpad-extra button{border:0;border-radius:14px;padding:12px 16px;background:rgba(255,255,255,.28);color:#fff;font-size:15px;font-weight:600;
+-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+@media (pointer:coarse){#rj-dpad{display:grid}#rj-dpad-extra{display:flex}}
+</style>
+<div id="rj-dpad"><span></span><button data-k="ArrowUp" data-c="38">▲</button><span></span>
+<button data-k="ArrowLeft" data-c="37">◀</button><span></span><button data-k="ArrowRight" data-c="39">▶</button>
+<span></span><button data-k="ArrowDown" data-c="40">▼</button><span></span></div>
+<div id="rj-dpad-extra">__EXTRA__</div>
+<script>(function(){
+function key(k,c){['keydown','keyup'].forEach(function(t,i){setTimeout(function(){
+var e=new KeyboardEvent(t,{key:k,code:k,bubbles:true,cancelable:true});
+try{Object.defineProperty(e,'keyCode',{get:function(){return c}});Object.defineProperty(e,'which',{get:function(){return c}});}catch(_){}
+(document.activeElement&&document.activeElement!==document.body?document.activeElement:document).dispatchEvent(e);},i*60);});}
+document.querySelectorAll('#rj-dpad button,#rj-dpad-extra button').forEach(function(b){
+b.addEventListener('touchstart',function(ev){ev.preventDefault();key(b.dataset.k,+b.dataset.c);},{passive:false});
+b.addEventListener('click',function(){key(b.dataset.k,+b.dataset.c);});});
+var sx=0,sy=0;document.addEventListener('touchstart',function(e){if(e.target.closest&&e.target.closest('#rj-dpad,#rj-dpad-extra'))return;sx=e.touches[0].clientX;sy=e.touches[0].clientY;},{passive:true});
+document.addEventListener('touchend',function(e){if(e.target.closest&&e.target.closest('#rj-dpad,#rj-dpad-extra'))return;var t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+if(Math.max(Math.abs(dx),Math.abs(dy))<30)return;if(Math.abs(dx)>Math.abs(dy))key(dx>0?'ArrowRight':'ArrowLeft',dx>0?39:37);else key(dy>0?'ArrowDown':'ArrowUp',dy>0?40:38);},{passive:true});
+})();</script>
+"""
+
+
+def patch_dpad(dest, game):
+    """Keyboard-only game: add a glass on-screen d-pad (touch devices only) plus swipe → arrow keys."""
+    idx = dest / "index.html"
+    h = idx.read_text(encoding="utf-8")
+    extra = "".join(f'<button data-k="{k}" data-c="{c}">{html.escape(label)}</button>' for label, k, c in game.get("dpad_extra", []))
+    block = DPAD.replace("__EXTRA__", extra)
+    h2 = h.replace("</body>", block + "</body>", 1) if "</body>" in h else h + block
+    idx.write_text(h2, encoding="utf-8")
+    return ["index.html: on-screen d-pad + swipe for touch devices" + (f" (+{[x[0] for x in game.get('dpad_extra', [])]})" if game.get("dpad_extra") else "")]
+
+
 PATCHES = {
+    "dpad": patch_dpad,
     "dino_touch": patch_dino_touch,
     "minesweeper": patch_minesweeper,
     "xqwlight_index": patch_xqwlight_index,
@@ -187,12 +244,24 @@ def build_game(game):
         s2, r = sanitize_html_text(p.read_text(encoding="utf-8"))
         p.write_text(s2, encoding="utf-8")
         notes += [f"(pre-build) {rel}: {x}" for x in r]
+    env = node_env(game["node"]) if game.get("node") else None
     for cmd in game.get("build", []):
-        run(cmd, repo_dir)
+        run(cmd, repo_dir, env)
     dest = SITE / game["slug"]
-    copy_tree(repo_dir / game["dir"], dest)
-    if game.get("patch"):
-        notes += PATCHES[game["patch"]](dest, game)
+    if game.get("include"):
+        for rel in game["include"]:
+            src = repo_dir / game["dir"] / rel
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                copy_tree(src, target)
+            else:
+                shutil.copyfile(src, target)
+    else:
+        copy_tree(repo_dir / game["dir"], dest)
+    patches = game.get("patch") or []
+    for name in ([patches] if isinstance(patches, str) else patches):
+        notes += PATCHES[name](dest, game)
     notes += sanitize_tree(dest)
     files = [p for p in dest.rglob("*") if p.is_file()]
     size = sum(p.stat().st_size for p in files)

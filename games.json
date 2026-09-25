@@ -129,14 +129,24 @@
  {
   "slug": "pacman",
   "name": "吃豆人",
-  "desc": "经典街机吃豆人（需要键盘方向键）",
+  "desc": "经典街机吃豆人，手机上有方向键",
   "icon": "🟡",
   "repo": "pacman",
   "ref": "master",
   "dir": ".",
   "license": "MIT",
   "upstream": "mumuy/pacman",
-  "patch": "mumuy_clean_index"
+  "patch": [
+   "mumuy_clean_index",
+   "dpad"
+  ],
+  "dpad_extra": [
+   [
+    "开始/暂停",
+    "Enter",
+    13
+   ]
+  ]
  },
  {
   "slug": "hextris",
@@ -192,5 +202,162 @@
   "license": "MIT",
   "upstream": "oldj/html5-tower-defense",
   "patch": "td_index"
+ },
+ {
+  "slug": "handle",
+  "name": "汉兜",
+  "desc": "成语版 Wordle，猜四字成语",
+  "icon": "🀄",
+  "repo": "handle",
+  "ref": "main",
+  "dir": "dist",
+  "license": "MIT",
+  "upstream": "antfu/handle",
+  "build": [
+   "npx -y pnpm@7 install --frozen-lockfile",
+   "npx -y pnpm@7 exec vite build --base ./"
+  ],
+  "featured": true
+ },
+ {
+  "slug": "mahjong",
+  "name": "麻将接龙",
+  "desc": "上海麻将消除，成对点掉所有牌",
+  "icon": "🀅",
+  "repo": "mah",
+  "ref": "main",
+  "dir": "dist",
+  "license": "MIT",
+  "upstream": "ffalt/mah",
+  "node": 26,
+  "build": [
+   "npm ci --no-audit --no-fund",
+   "npx ng build --base-href ./"
+  ],
+  "featured": true
+ },
+ {
+  "slug": "spider",
+  "name": "蜘蛛纸牌",
+  "desc": "经典蜘蛛纸牌，适配手机",
+  "icon": "🕷️",
+  "repo": "spider-solitaire",
+  "ref": "main",
+  "dir": "dist",
+  "license": "MIT",
+  "upstream": "lklynet/spider-solitaire",
+  "build": [
+   "npm ci --no-audit --no-fund",
+   "npx tsc -b",
+   "npx vite build --base ./"
+  ],
+  "featured": true
+ },
+ {
+  "slug": "sokoban",
+  "name": "推箱子",
+  "desc": "把箱子推到目标点，手机上有方向键",
+  "icon": "📦",
+  "repo": "sokoban",
+  "ref": "main",
+  "dir": ".",
+  "license": "MIT",
+  "upstream": "taniarascia/sokoban",
+  "patch": "dpad"
+ },
+ {
+  "slug": "memory",
+  "name": "记忆翻牌",
+  "desc": "翻开两张相同的牌，适合小朋友",
+  "icon": "🃏",
+  "repo": "memory",
+  "ref": "master",
+  "dir": ".",
+  "license": "MIT",
+  "upstream": "taniarascia/memory"
+ },
+ {
+  "slug": "chess",
+  "name": "国际象棋",
+  "desc": "和简单 AI 下国际象棋",
+  "icon": "♞",
+  "repo": "simple-chess-ai",
+  "ref": "master",
+  "dir": ".",
+  "license": "Apache-2.0",
+  "upstream": "lhartikk/simple-chess-ai"
+ },
+ {
+  "slug": "checkers",
+  "name": "西洋跳棋",
+  "desc": "双人同屏对战",
+  "icon": "🔴",
+  "repo": "checkers",
+  "ref": "master",
+  "dir": ".",
+  "license": "GPL-2.0",
+  "upstream": "codethejason/checkers"
+ },
+ {
+  "slug": "breakout",
+  "name": "打砖块",
+  "desc": "LittleJS 打砖块，拖动挡板",
+  "icon": "🧱",
+  "repo": "LittleJS",
+  "ref": "main",
+  "dir": ".",
+  "include": [
+   "dist/littlejs.esm.js",
+   "examples/breakout",
+   "examples/favicon.png"
+  ],
+  "entry": "examples/breakout/",
+  "license": "MIT",
+  "upstream": "KilledByAPixel/LittleJS"
+ },
+ {
+  "slug": "match3",
+  "name": "消消乐",
+  "desc": "三连消除，点击交换宝石",
+  "icon": "💎",
+  "repo": "LittleJS",
+  "ref": "main",
+  "dir": ".",
+  "include": [
+   "dist/littlejs.esm.js",
+   "examples/puzzle",
+   "examples/favicon.png"
+  ],
+  "entry": "examples/puzzle/",
+  "license": "MIT",
+  "upstream": "KilledByAPixel/LittleJS"
+ },
+ {
+  "slug": "platformer",
+  "name": "平台跳跃",
+  "desc": "LittleJS 横版跳跃射击",
+  "icon": "🏃",
+  "repo": "LittleJS",
+  "ref": "main",
+  "dir": ".",
+  "include": [
+   "dist/littlejs.esm.js",
+   "examples/platformer",
+   "examples/favicon.png"
+  ],
+  "entry": "examples/platformer/",
+  "license": "MIT",
+  "upstream": "KilledByAPixel/LittleJS"
+ },
+ {
+  "slug": "radius",
+  "name": "太空射击",
+  "desc": "Radius Raid，键盘移动+鼠标瞄准（电脑玩）",
+  "icon": "🚀",
+  "repo": "radius-raid-js13k",
+  "ref": "master",
+  "dir": ".",
+  "license": "MIT",
+  "upstream": "jackrugile/radius-raid-js13k"
  }
 ]
