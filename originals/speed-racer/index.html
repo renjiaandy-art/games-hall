@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>极速赛车</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640;
+  const ROAD_X0 = 30, ROAD_X1 = 330, LANES = 4;
+  const LANE_W = (ROAD_X1 - ROAD_X0) / LANES;
+  const PLAYER_Y = H - 120, CAR_W = 40, CAR_H = 70;
+  const LANE_SPEED = 900; // px/s lane-change slide
+  const START_LIVES = 3;
+
+  RJ.init({
+    id: 'speed-racer', title: '极速赛车', icon: '🏎️', subtitle: '穿梭车流，躲避碰撞，冲出最远距离！',
+    howto: '• 左右滑动屏幕 / 点击道路两侧 / 方向键·A D：切换车道躲避来车<br>• 撞上其他车辆损失一条生命，生命耗尽游戏结束<br>• 捡到 ⚡ 氮气瓶可临时加速冲刺（更快更难躲）<br>• 行驶距离决定分数，车速随距离越来越快',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['dist', 'life']);
+
+  function laneX(l) { return ROAD_X0 + LANE_W * (l + 0.5); }
+
+  let running, player, cars, pickups, particles, dashOff, speed, totalPx, meters, lives, invulT, boostT, spawnT, pickupT, prevLeft, prevRight, shakeT, dragStartX, dragging;
+
+  function startGame() {
+    running = true;
+    player = { lane: Math.floor(LANES / 2), x: laneX(Math.floor(LANES / 2)) };
+    cars = []; pickups = []; particles = [];
+    dashOff = 0; speed = 230; totalPx = 0; meters = 0; lives = START_LIVES; invulT = 0; boostT = 0;
+    spawnT = 0.9; pickupT = 3.2; prevLeft = false; prevRight = false; shakeT = 0; dragging = false;
+  }
+
+  function changeLane(d) {
+    if (!running) return;
+    const nl = player.lane + d;
+    if (nl < 0 || nl >= LANES) return;
+    player.lane = nl;
+    RJ.sfx('move');
+  }
+
+  view.onPointer(
+    (p) => { dragging = true; dragStartX = p.x; },
+    (p) => {
+      if (!dragging) return;
+      const dx = p.x - dragStartX;
+      if (Math.abs(dx) > 46) { changeLane(dx > 0 ? 1 : -1); dragStartX = p.x; }
+    },
+    (p) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = p.x - dragStartX;
+      if (Math.abs(dx) < 12) { // tap: steer toward tapped side of the car
+        if (p.x < player.x - 8) changeLane(-1);
+        else if (p.x > player.x + 8) changeLane(1);
+      }
+    },
+  );
+
+  function spawnCar() {
+    const lane = RJ.randi(0, LANES - 1);
+    const palette = ['#ff5a5a', '#5a9dff', '#ffd35a', '#9c6bff', '#5adf9a'];
+    cars.push({ lane, x: laneX(lane), y: -CAR_H, color: palette[RJ.randi(0, palette.length - 1)] });
+  }
+  function spawnPickup() {
+    const lane = RJ.randi(0, LANES - 1);
+    pickups.push({ lane, x: laneX(lane), y: -30 });
+  }
+
+  function hitPlayer() {
+    if (invulT > 0) return;
+    lives--; invulT = 1.4; shakeT = 0.3;
+    RJ.sfx('boom');
+    for (let i = 0; i < 14; i++) particles.push({ x: player.x, y: PLAYER_Y, t: 0, a: Math.random() * 6.28, sp: RJ.rand(60, 220), c: '#ff8a3c' });
+    if (lives <= 0) {
+      running = false;
+      RJ.over({ title: '撞车了！', sub: `行驶了 ${meters} 米`, score: meters });
+    }
+  }
+
+  function update(dt) {
+    for (const p of particles) p.t += dt;
+    particles = particles.filter((p) => p.t < 0.6);
+    dashOff = (dashOff + speed * dt) % 48;
+    shakeT = Math.max(0, shakeT - dt);
+    if (!running) return;
+
+    invulT = Math.max(0, invulT - dt);
+    boostT = Math.max(0, boostT - dt);
+
+    const lk = RJ.keys['ArrowLeft'] || RJ.keys['a'] || RJ.keys['A'];
+    if (lk && !prevLeft) changeLane(-1);
+    prevLeft = lk;
+    const rk = RJ.keys['ArrowRight'] || RJ.keys['d'] || RJ.keys['D'];
+    if (rk && !prevRight) changeLane(1);
+    prevRight = rk;
+
+    const target = laneX(player.lane);
+    const dx = target - player.x;
+    const step = Math.sign(dx) * Math.min(Math.abs(dx), LANE_SPEED * dt);
+    player.x += step;
+
+    totalPx += speed * dt;
+    meters = Math.floor(totalPx / 30);
+    const baseSpeed = Math.min(600, 230 + meters * 1.1);
+    speed = boostT > 0 ? Math.min(760, baseSpeed * 1.55) : baseSpeed;
+
+    spawnT -= dt;
+    if (spawnT <= 0) { spawnCar(); spawnT = Math.max(0.55, 1.15 - meters / 900); }
+    pickupT -= dt;
+    if (pickupT <= 0) { spawnPickup(); pickupT = RJ.rand(4, 6.5); }
+
+    const pTop = PLAYER_Y - CAR_H / 2, pBot = PLAYER_Y + CAR_H / 2, pL = player.x - CAR_W / 2, pR = player.x + CAR_W / 2;
+    for (let i = cars.length - 1; i >= 0; i--) {
+      const c = cars[i];
+      c.y += speed * dt;
+      if (c.y > H + CAR_H) { cars.splice(i, 1); continue; }
+      const cTop = c.y - CAR_H / 2, cBot = c.y + CAR_H / 2, cL = c.x - CAR_W / 2, cR = c.x + CAR_W / 2;
+      if (cR > pL && cL < pR && cBot > pTop && cTop < pBot) {
+        hitPlayer();
+        cars.splice(i, 1);
+      }
+    }
+    for (let i = pickups.length - 1; i >= 0; i--) {
+      const u = pickups[i];
+      u.y += speed * dt;
+      if (u.y > H + 30) { pickups.splice(i, 1); continue; }
+      if (Math.abs(u.x - player.x) < 30 && Math.abs(u.y - PLAYER_Y) < 44) {
+        pickups.splice(i, 1); boostT = 2.4; RJ.sfx('coin');
+        for (let k = 0; k < 10; k++) particles.push({ x: u.x, y: u.y, t: 0, a: Math.random() * 6.28, sp: RJ.rand(50, 160), c: '#ffe066' });
+      }
+    }
+  }
+
+  function drawCar(x, y, color, flip) {
+    ctx.save(); ctx.translate(x, y);
+    RJ.rr(ctx, -CAR_W / 2, -CAR_H / 2, CAR_W, CAR_H, 10); ctx.fillStyle = color; ctx.fill();
+    ctx.fillStyle = 'rgba(20,25,45,.7)'; RJ.rr(ctx, -CAR_W / 2 + 6, -CAR_H / 2 + (flip ? CAR_H - 24 : 8), CAR_W - 12, 16, 5); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; RJ.rr(ctx, -CAR_W / 2 + 3, -CAR_H / 2 + 3, CAR_W - 6, CAR_H / 2 - 6, 8); ctx.fill();
+    ctx.fillStyle = '#222';
+    const wy = flip ? -CAR_H / 2 + 12 : CAR_H / 2 - 12;
+    ctx.fillRect(-CAR_W / 2 - 2, wy - 6, 5, 12); ctx.fillRect(CAR_W / 2 - 3, wy - 6, 5, 12);
+    const wy2 = flip ? CAR_H / 2 - 12 : -CAR_H / 2 + 12;
+    ctx.fillRect(-CAR_W / 2 - 2, wy2 - 6, 5, 12); ctx.fillRect(CAR_W / 2 - 3, wy2 - 6, 5, 12);
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.save();
+    if (shakeT > 0) ctx.translate(RJ.rand(-5, 5) * (shakeT / 0.3), RJ.rand(-3, 3) * (shakeT / 0.3));
+    ctx.fillStyle = '#4a8b3f'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#3a3f4d'; ctx.fillRect(ROAD_X0, 0, ROAD_X1 - ROAD_X0, H);
+    ctx.strokeStyle = '#ffd35a'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(ROAD_X0, 0); ctx.lineTo(ROAD_X0, H); ctx.moveTo(ROAD_X1, 0); ctx.lineTo(ROAD_X1, H); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 4;
+    for (let i = 1; i < LANES; i++) {
+      const x = ROAD_X0 + LANE_W * i;
+      ctx.setLineDash([22, 20]); ctx.lineDashOffset = -dashOff;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    for (const u of pickups) {
+      ctx.save(); ctx.translate(u.x, u.y);
+      ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('⚡', 0, 0);
+      ctx.restore();
+    }
+    for (const c of cars) drawCar(c.x, c.y, c.color, true);
+
+    if (invulT <= 0 || Math.floor(invulT * 12) % 2 === 0) drawCar(player.x, PLAYER_Y, boostT > 0 ? '#ff8a1f' : '#2ec4ff', false);
+
+    for (const p of particles) {
+      const k = p.t / 0.6;
+      ctx.globalAlpha = 1 - k; ctx.fillStyle = p.c;
+      ctx.beginPath(); ctx.arc(p.x + Math.cos(p.a) * p.sp * p.t, p.y + Math.sin(p.a) * p.sp * p.t, 3 + k * 3, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    if (boostT > 0) { ctx.fillStyle = `rgba(255,180,50,${0.12 + Math.sin(performance.now() / 60) * 0.05})`; ctx.fillRect(0, 0, W, H); }
+
+    ctx.restore();
+    pill('dist', `距离 ${meters}m`);
+    pill('life', '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, START_LIVES - lives)));
+  }
+
+  RJ.loop(update, draw);
+  running = false; totalPx = 0; meters = 0; lives = START_LIVES; speed = 230; invulT = 0; boostT = 0; shakeT = 0;
+  player = { lane: Math.floor(LANES / 2), x: laneX(Math.floor(LANES / 2)) };
+  cars = []; pickups = []; particles = [];
+})();
+</script></body></html>
