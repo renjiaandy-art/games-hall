@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>投篮高手</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640;
+  const GRAV = 1500, BALL_R = 15, RIM_Y = 150, RIM_HALF = 34, POST_R = 5;
+  const BOARD_TOP = 90, BOARD_BOTTOM = 150, BOARD_X = 300;
+  const HOOP_X_MIN = 210, HOOP_X_MAX = 300;
+  const GROUND_Y = 600;
+  const TIME_LIMIT = 60;
+
+  RJ.init({
+    id: 'hoop-shot', title: '投篮高手', icon: '🏀', subtitle: '手指上滑投篮，限时60秒冲高分！',
+    howto: '• 手指按住篮球向上滑动出手，滑动方向与力度决定抛物线<br>• 空心入网（不碰篮筐）得 3 分，普通命中得 2 分<br>• 连续命中会有连击加分，错过则连击清零<br>• 限时 60 秒，后期篮筐会左右移动，请注意瞄准',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['time', 'combo']);
+
+  const START = { x: 130, y: 520 };
+  let running, busy, ball, timeLeft, score, combo, touchedRim, scored, hoopX, hoopVX, moveOn, particles, popups, dragging, dragStart, dragCur, flashT;
+
+  function newBall() {
+    ball = { x: START.x, y: START.y, vx: 0, vy: 0, inFlight: false, r: BALL_R };
+    touchedRim = false; scored = false;
+    busy = false;
+  }
+
+  function startGame() {
+    running = true; busy = false;
+    timeLeft = TIME_LIMIT; score = 0; combo = 0;
+    hoopX = 260; hoopVX = 0; moveOn = false;
+    particles = []; popups = []; dragging = false; flashT = 0;
+    newBall();
+  }
+
+  function hoopPts() { return { left: hoopX - RIM_HALF, right: hoopX + RIM_HALF }; }
+
+  view.onPointer(
+    (p) => {
+      if (!running || busy) return;
+      if (Math.hypot(p.x - ball.x, p.y - ball.y) < BALL_R + 26) { dragging = true; dragStart = { x: p.x, y: p.y }; dragCur = { x: p.x, y: p.y }; RJ.unlockAudio(); }
+    },
+    (p) => { if (dragging) dragCur = { x: p.x, y: p.y }; },
+    (p) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = dragStart.x - p.x, dy = dragStart.y - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dy <= 10 || dist < 18) return; // must swipe upward with enough force
+      const power = Math.min(dist, 220);
+      const speed = power * 5.2;
+      const ang = Math.atan2(-dy, -dx);
+      ball.vx = Math.cos(ang) * speed;
+      ball.vy = Math.sin(ang) * speed;
+      ball.inFlight = true; busy = true;
+      RJ.sfx('shoot');
+    },
+  );
+
+  function popup(x, y, text, color) { popups.push({ x, y, text, color, t: 0 }); }
+
+  function resolveMiss() {
+    combo = 0;
+    RJ.sfx('bad');
+  }
+
+  function endShotSoon() {
+    setTimeout(() => { if (running) newBall(); }, 550);
+  }
+
+  function makeShot() {
+    scored = true;
+    const swish = !touchedRim;
+    const pts = swish ? 3 : 2;
+    combo++;
+    const bonus = combo >= 5 ? 2 : (combo >= 3 ? 1 : 0);
+    score += pts + bonus;
+    flashT = 0.3;
+    popup(ball.x, ball.y, '+' + (pts + bonus) + (swish ? ' 空心！' : ''), swish ? '#ffd94a' : '#7fe98a');
+    RJ.sfx(swish ? 'coin' : 'pop');
+    for (let i = 0; i < 14; i++) particles.push({ x: hoopX, y: RIM_Y, a: Math.random() * 6.28, sp: RJ.rand(60, 200), t: 0, c: swish ? '#ffd94a' : '#7fe98a' });
+    if (combo === 5) { moveOn = true; RJ.toast('篮筐开始移动了！'); }
+    ball.inFlight = false; busy = true;
+    endShotSoon();
+  }
+
+  function update(dt) {
+    for (const p of particles) p.t += dt;
+    particles = particles.filter((p) => p.t < 0.6);
+    for (const p of popups) p.t += dt;
+    popups = popups.filter((p) => p.t < 0.9);
+    flashT = Math.max(0, flashT - dt);
+    if (!running) return;
+
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+      timeLeft = 0; running = false;
+      RJ.over({ title: '时间到！', sub: `本局得分 ${score}`, score });
+      return;
+    }
+
+    if (moveOn) {
+      hoopVX += RJ.rand(-1, 1) * 40 * dt;
+      hoopVX = Math.max(-90, Math.min(90, hoopVX));
+      hoopX += hoopVX * dt;
+      if (hoopX < HOOP_X_MIN) { hoopX = HOOP_X_MIN; hoopVX = Math.abs(hoopVX); }
+      if (hoopX > HOOP_X_MAX) { hoopX = HOOP_X_MAX; hoopVX = -Math.abs(hoopVX); }
+    }
+
+    if (!ball.inFlight) return;
+
+    ball.vy += GRAV * dt;
+    const prevY = ball.y, prevX = ball.x;
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+
+    // backboard collision (vertical line at BOARD_X, moves with hoop offset)
+    const boardX = hoopX + (BOARD_X - 260);
+    if (ball.vx > 0 && prevX + ball.r <= boardX && ball.x + ball.r > boardX && ball.y > BOARD_TOP - 10 && ball.y < BOARD_BOTTOM + 10) {
+      ball.x = boardX - ball.r;
+      ball.vx = -ball.vx * 0.55;
+      touchedRim = true;
+      RJ.sfx('hit');
+    }
+
+    // rim post collisions
+    const { left, right } = hoopPts();
+    for (const px of [left, right]) {
+      const dx = ball.x - px, dy = ball.y - RIM_Y;
+      const d = Math.hypot(dx, dy);
+      if (d < ball.r + POST_R) {
+        const nx = dx / (d || 1), ny = dy / (d || 1);
+        const overlap = ball.r + POST_R - d;
+        ball.x += nx * overlap; ball.y += ny * overlap;
+        const dot = ball.vx * nx + ball.vy * ny;
+        ball.vx = (ball.vx - 2 * dot * nx) * 0.55;
+        ball.vy = (ball.vy - 2 * dot * ny) * 0.55;
+        touchedRim = true;
+        RJ.sfx('hit');
+      }
+    }
+
+    // scoring: crossing rim line downward, between posts, not yet scored
+    if (!scored && ball.vy > 0 && prevY < RIM_Y && ball.y >= RIM_Y && ball.x > left + ball.r * 0.3 && ball.x < right - ball.r * 0.3) {
+      makeShot();
+    }
+
+    // out of bounds / ground -> miss
+    if (ball.y - ball.r > GROUND_Y || ball.x < -40 || ball.x > W + 40) {
+      if (!scored) { resolveMiss(); }
+      ball.inFlight = false; busy = true;
+      endShotSoon();
+    } else if (ball.y + ball.r > GROUND_Y && ball.vy > 0) {
+      // bounced on ground without scoring
+      if (!scored) resolveMiss();
+      ball.inFlight = false; busy = true;
+      endShotSoon();
+    }
+  }
+
+  function drawHoop() {
+    const boardX = hoopX + (BOARD_X - 260);
+    ctx.fillStyle = '#e8ecf5';
+    RJ.rr(ctx, boardX - 4, BOARD_TOP, 8, BOARD_BOTTOM - BOARD_TOP, 3); ctx.fill();
+    ctx.strokeStyle = '#c33'; ctx.lineWidth = 2;
+    ctx.strokeRect(boardX - 2, RIM_Y - 20, 20, 16);
+    // net + rim
+    const { left, right } = hoopPts();
+    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.4;
+    for (let i = 0; i <= 6; i++) {
+      const x0 = left + (right - left) * i / 6;
+      const x1 = hoopX + (x0 - hoopX) * 0.35;
+      ctx.beginPath(); ctx.moveTo(x0, RIM_Y); ctx.lineTo(x1, RIM_Y + 34); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.moveTo(left, RIM_Y + 2); ctx.lineTo(right, RIM_Y + 2); ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
+    ctx.fillStyle = '#ff6a2c';
+    ctx.beginPath(); ctx.ellipse(hoopX, RIM_Y, RIM_HALF, 7, 0, 0, Math.PI); ctx.fill();
+    ctx.fillStyle = '#d64500';
+    ctx.beginPath(); ctx.arc(left, RIM_Y, POST_R, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(right, RIM_Y, POST_R, 0, 7); ctx.fill();
+  }
+
+  function drawBall(x, y) {
+    ctx.save(); ctx.translate(x, y);
+    const g = ctx.createRadialGradient(-5, -5, 2, 0, 0, BALL_R);
+    g.addColorStop(0, '#ff9d52'); g.addColorStop(1, '#d9601a');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, BALL_R, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#7a3200'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(-BALL_R, 0); ctx.lineTo(BALL_R, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -BALL_R); ctx.lineTo(0, BALL_R); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, BALL_R, -0.9, 0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, BALL_R, Math.PI - 0.9, Math.PI + 0.9); ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#2b3a67'); g.addColorStop(1, '#0f1730');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.06)';
+    for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.arc(60 + i * 70, 60, 3, 0, 7); ctx.fill(); }
+    if (flashT > 0) { ctx.fillStyle = `rgba(255,255,255,${flashT * 0.5})`; ctx.fillRect(0, 0, W, H); }
+
+    ctx.fillStyle = '#274023';
+    ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(W, GROUND_Y); ctx.stroke();
+
+    drawHoop();
+
+    if (dragging) {
+      ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 3; ctx.setLineDash([6, 6]);
+      ctx.beginPath(); ctx.moveTo(ball.x, ball.y); ctx.lineTo(ball.x - (dragCur.x - dragStart.x), ball.y - (dragCur.y - dragStart.y)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    drawBall(ball.x, ball.y);
+
+    for (const p of particles) {
+      const k = p.t / 0.6;
+      ctx.globalAlpha = 1 - k; ctx.fillStyle = p.c;
+      ctx.beginPath(); ctx.arc(p.x + Math.cos(p.a) * p.sp * p.t, p.y + Math.sin(p.a) * p.sp * p.t - 40 * p.t * p.t, 3 + k * 3, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    for (const p of popups) {
+      const k = p.t / 0.9;
+      ctx.globalAlpha = 1 - k; ctx.fillStyle = p.color; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(p.text, p.x, p.y - k * 50);
+    }
+    ctx.globalAlpha = 1;
+
+    if (!running && timeLeft > 0) return;
+    pill('time', `⏱ ${Math.ceil(timeLeft)}s`);
+    pill('combo', combo > 1 ? `🔥 连击 x${combo}` : `得分 ${score}`);
+  }
+
+  RJ.loop(update, draw);
+  running = false; busy = false; timeLeft = TIME_LIMIT; score = 0; combo = 0;
+  hoopX = 260; hoopVX = 0; moveOn = false; particles = []; popups = []; dragging = false; flashT = 0;
+  ball = { x: START.x, y: START.y, vx: 0, vy: 0, inFlight: false, r: BALL_R };
+})();
+</script></body></html>
