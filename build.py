@@ -417,7 +417,8 @@ def main():
     sources = "<br>".join(
         f'{html.escape(g["name"])}：<a href="https://github.com/{g["upstream"]}" target="_blank" rel="noopener">{g["upstream"]}</a>（{g["license"]}）'
         for g in ok)
-    (SITE / "index.html").write_text(HALL.replace("{count}", str(len(ok))).replace("{cards}", cards).replace("{sources}", sources), encoding="utf-8")
+    n_games = sum(1 for g in ok if g["slug"] != "flash")
+    (SITE / "index.html").write_text(HALL.replace("{count}", str(n_games)).replace("{cards}", cards).replace("{sources}", sources), encoding="utf-8")
     (SITE / "games.json").write_text(json.dumps([{k: g[k] for k in ("slug", "name", "desc", "icon", "upstream", "license")} | {"entry": g.get("entry", "")} for g in ok], ensure_ascii=False, indent=1), encoding="utf-8")
     total = sum(1 for p in SITE.rglob("*") if p.is_file())
     print("\n==== REPORT ====")
