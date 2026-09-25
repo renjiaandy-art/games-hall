@@ -361,6 +361,37 @@ def build_game(game):
             "removed": notes, "tracker_residue": sorted(set(residue))[:10]}
 
 
+CATS = ["棋牌", "益智", "休闲", "动作射击", "体育", "工具"]
+SLUG_CAT = {
+    # 棋牌
+    "xiangqi": "棋牌", "gobang": "棋牌", "chess": "棋牌", "checkers": "棋牌", "mahjong": "棋牌", "spider": "棋牌",
+    "doudizhu": "棋牌", "weiqi": "棋牌", "reversi": "棋牌", "ludo": "棋牌", "solitaire": "棋牌", "blackjack": "棋牌",
+    # 益智
+    "2048": "益智", "sudoku": "益智", "minesweeper": "益智", "sokoban": "益智", "handle": "益智", "memory": "益智",
+    "ending": "益智", "adarkroom": "益智", "slide-puzzle": "益智", "one-stroke": "益智", "color-link": "益智",
+    "brain-pack": "益智", "pipe-connect": "益智", "link-match": "益智", "tetris": "益智", "hextris": "益智",
+    # 休闲
+    "tower": "休闲", "yang": "休闲", "match3": "休闲", "goldminer": "休闲", "charge-jump": "休闲", "whack-a-mole": "休闲",
+    "fruit-slice": "休闲", "fruit-merge": "休闲", "star-pop": "休闲", "piano-tiles": "休闲", "deep-fishing": "休闲",
+    "ball-eater": "休闲", "draw-guard": "休闲", "bubble-pop": "休闲", "marble-chain": "休闲", "slingshot": "休闲",
+    "flappy": "休闲", "dino": "休闲",
+    # 动作射击
+    "snake": "动作射击", "pacman": "动作射击", "breakout": "动作射击", "platformer": "动作射击", "radius": "动作射击",
+    "asteroids": "动作射击", "td": "动作射击", "tank-battle": "动作射击", "sky-shooter": "动作射击", "dash-runner": "动作射击",
+    "star-invaders": "动作射击", "frog-cross": "动作射击", "snake-arena": "动作射击", "garden-defense": "动作射击",
+    "fire-ice-duo": "动作射击",
+    # 体育
+    "billiards": "体育", "hoop-shot": "体育", "speed-racer": "体育", "pinball": "体育",
+    # 工具
+    "flash": "工具",
+}
+
+
+def cat_of(g):
+    c = g.get("cat") or g.get("category") or SLUG_CAT.get(g["slug"]) or "休闲"
+    return c if c in CATS else "休闲"
+
+
 HALL = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -380,14 +411,35 @@ background:var(--glass);border:1px solid var(--border);-webkit-backdrop-filter:b
 box-shadow:0 10px 30px rgba(10,14,40,.25),inset 0 1px 0 rgba(255,255,255,.5);transition:transform .15s}
 .card:active{transform:scale(.97)} @media(hover:hover){.card:hover{transform:translateY(-3px)}}
 .icon{font-size:38px;line-height:1} .name{font-weight:700;font-size:16px} .desc{font-size:12.5px;opacity:.78;line-height:1.4}
+.bar{position:sticky;top:0;z-index:5;padding:10px 0 8px;margin:0 -4px;background:linear-gradient(#1f1d52f0,#1f1d52c0 80%,#1f1d5200);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+#q{width:100%;height:44px;border-radius:22px;border:1px solid var(--border);background:var(--glass);color:#fff;font-size:16px;padding:0 16px;outline:none;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+#q::placeholder{color:rgba(255,255,255,.65)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:10px 0 2px;scrollbar-width:none}.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;height:32px;padding:0 14px;border-radius:16px;border:1px solid var(--border);background:var(--glass);color:#fff;font-size:14px;font-weight:600}
+.chip.on{background:#fff;color:#1c1c1e}
+.empty{display:none;text-align:center;opacity:.7;margin:30px 0}
+section.hide,.card.hide{display:none}
 h2{font-size:18px;margin:24px 4px 12px} h2 small{font-size:12px;font-weight:400;opacity:.7;margin-left:6px}
 .tag{font-size:10.5px;font-weight:700;margin-left:6px;padding:2px 6px;border-radius:8px;background:#ff9f0a;vertical-align:2px}
 .foot{margin-top:28px;font-size:12px;opacity:.6;line-height:1.7} .foot a{color:#fff}
 </style></head><body><div class="wrap">
-<h1>🎮 游戏大厅</h1><p class="sub">{count} 款开源小游戏，全部在浏览器里运行，无广告、无统计</p>
+<h1>🎮 游戏大厅</h1><p class="sub">{count} 款小游戏，全部在浏览器里运行，无广告、无统计</p>
+<div class="bar"><input id="q" type="search" placeholder="搜索游戏，比如 象棋、消除、赛车" autocomplete="off" enterkeyhint="search">
+<div class="chips" id="chips">{chips}</div></div><p class="empty" id="empty">没有找到，换个词试试</p>
 {cards}
-<div class="foot">每款游戏都来自 GitHub 开源项目（已去掉原版的广告和统计代码）：<br>{sources}</div>
-</div></body></html>
+<div class="foot">开源精选的游戏都来自 GitHub 开源项目（已去掉原版的广告和统计代码）：<br>{sources}</div>
+</div>
+<script>
+(function(){var q=document.getElementById('q'),chips=document.getElementById('chips'),cur='全部';
+function apply(){var t=q.value.trim().toLowerCase(),any=false;
+document.querySelectorAll('section[data-cat]').forEach(function(sec){var n=0;
+sec.querySelectorAll('.card').forEach(function(c){var ok=(cur==='全部'||(cur==='原创'?c.dataset.orig==='1':sec.dataset.cat===cur))&&(!t||c.dataset.k.indexOf(t)>=0);
+c.classList.toggle('hide',!ok);if(ok)n++;});sec.classList.toggle('hide',!n);if(n)any=true;});
+document.getElementById('empty').style.display=any?'none':'block';}
+q.addEventListener('input',apply);
+chips.addEventListener('click',function(e){var b=e.target.closest('.chip');if(!b)return;cur=b.dataset.c;
+chips.querySelectorAll('.chip').forEach(function(x){x.classList.toggle('on',x===b);});apply();});})();
+</script></body></html>
 """
 
 
@@ -455,17 +507,23 @@ def main():
                    "upstream": "ruffle-rs/ruffle", "license": "MIT/Apache-2.0"})
     def card(g):
         tag = '<span class="tag">原创</span>' if g.get("original") else ""
-        return (f'<a class="card" href="{g["slug"]}/{g.get("entry", "")}"><div class="icon">{g["icon"]}</div>'
+        key = html.escape((g["name"] + " " + g["desc"] + " " + g["slug"] + " " + cat_of(g) + (" 原创" if g.get("original") else "")).lower())
+        return (f'<a class="card" data-k="{key}" data-orig="{1 if g.get("original") else 0}" href="{g["slug"]}/{g.get("entry", "")}"><div class="icon">{g["icon"]}</div>'
                 f'<div class="name">{html.escape(g["name"])}{tag}</div><div class="desc">{html.escape(g["desc"])}</div></a>')
+    everything = originals + ok
+    icons = {"棋牌": "♟️", "益智": "🧩", "休闲": "🍉", "动作射击": "🚀", "体育": "🏀", "工具": "🛠️"}
     cards = ""
-    if originals:
-        cards += '<h2>🎨 原创经典 <small>本站原创代码，玩法致敬经典</small></h2><div class="grid">' + "".join(card(g) for g in originals) + "</div>"
-    cards += '<h2>🌐 开源精选 <small>来自 GitHub 的开源游戏</small></h2><div class="grid">' + "".join(card(g) for g in ok) + "</div>"
+    for c in CATS:
+        gs = [g for g in everything if cat_of(g) == c]
+        if gs:
+            cards += f'<section data-cat="{c}"><h2>{icons[c]} {c} <small>{len(gs)} 款</small></h2><div class="grid">' + "".join(card(g) for g in gs) + "</div></section>"
+    chip_names = ["全部"] + (["原创"] if originals else []) + [c for c in CATS if any(cat_of(g) == c for g in everything)]
+    chips = "".join(f'<button class="chip{" on" if c == "全部" else ""}" data-c="{c}">{c}</button>' for c in chip_names)
     sources = ("「原创经典」分类的游戏由本站自己编写，代码以 MIT 协议开源：<a href=\"https://github.com/renjiaandy-art/games-hall\" target=\"_blank\" rel=\"noopener\">renjiaandy-art/games-hall</a><br>" if originals else "") + "<br>".join(
         f'{html.escape(g["name"])}：<a href="https://github.com/{g["upstream"]}" target="_blank" rel="noopener">{g["upstream"]}</a>（{g["license"]}）'
         for g in ok)
     n_games = sum(1 for g in ok if g["slug"] != "flash") + len(originals)
-    (SITE / "index.html").write_text(HALL.replace("{count}", str(n_games)).replace("{cards}", cards).replace("{sources}", sources), encoding="utf-8")
+    (SITE / "index.html").write_text(HALL.replace("{count}", str(n_games)).replace("{cards}", cards).replace("{chips}", chips).replace("{sources}", sources), encoding="utf-8")
     (SITE / "games.json").write_text(json.dumps([{k: g[k] for k in ("slug", "name", "desc", "icon", "upstream", "license")} | {"entry": g.get("entry", ""), "original": bool(g.get("original"))} for g in originals + ok], ensure_ascii=False, indent=1), encoding="utf-8")
     total = sum(1 for p in SITE.rglob("*") if p.is_file())
     print("\n==== REPORT ====")
