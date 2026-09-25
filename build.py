@@ -112,7 +112,17 @@ def patch_td_index(dest, game):
     return ["index.html = td.html using the Chinese package"]
 
 
+def patch_hextris_ga(dest, game):
+    p = dest / "js" / "initialization.js"
+    s = p.read_text(encoding="utf-8")
+    new, n = re.subn(r"\(function\(i, s, o, g, r, a, m\) \{.*?ga\('send', 'pageview'\);", "", s, count=1, flags=re.S)
+    assert n == 1, "hextris GA loader not found"
+    p.write_text(new, encoding="utf-8")
+    return ["js/initialization.js: runtime Google Analytics loader + ga() calls removed"]
+
+
 PATCHES = {
+    "hextris_ga": patch_hextris_ga,
     "mumuy_clean_index": patch_mumuy_clean_index,
     "adarkroom_mobile": patch_adarkroom_mobile,
     "td_index": patch_td_index,
