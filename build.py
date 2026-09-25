@@ -313,9 +313,12 @@ PATCHES = {
 }
 
 
-def copy_tree(src, dst):
+DEV_ONLY = re.compile(r"^(test|smoke-test|smoke_test)\.(m?js|html)$|\.test\.m?js$|\.spec\.m?js$")
+
+
+def copy_tree(src, dst, skip_dev=False):
     def ignore(d, names):
-        return [n for n in names if n in SKIP]
+        return [n for n in names if n in SKIP or (skip_dev and DEV_ONLY.search(n))]
     shutil.copytree(src, dst, ignore=ignore)
 
 
@@ -465,7 +468,7 @@ def build_originals():
         if dest.exists():
             print(f"!! originals/{d.name}: slug {slug} collides with another game, skipped")
             continue
-        copy_tree(d, dest)
+        copy_tree(d, dest, skip_dev=True)
         ext = []
         for p in dest.rglob("*"):
             if p.suffix.lower() in (".html", ".htm", ".js", ".mjs", ".css"):
