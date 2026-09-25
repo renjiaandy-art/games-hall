@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>拼水管</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; touch-action: none;
+    background: #10131f; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #hud {
+    display: flex; align-items: center; gap: 8px; padding: calc(env(safe-area-inset-top) + 8px) 12px 8px;
+    font-size: 13px; font-weight: 600;
+  }
+  #hud a { color: #fff; text-decoration: none; opacity: .85; }
+  #hud .sp { flex: 1; }
+  #hud .pill {
+    padding: 4px 9px; border-radius: 12px; background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.22); font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #hud .pill.warn { background: rgba(255,90,90,.35); border-color: rgba(255,120,120,.5); }
+  #hud button {
+    border: 0; border-radius: 12px; padding: 6px 10px; background: rgba(255,255,255,.18); color: #fff;
+    font-size: 12.5px; font-weight: 600;
+  }
+  #stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px; min-height: 0; }
+  #stage canvas { display: block; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.45); touch-action: none; }
+  #toast {
+    position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 54px); transform: translateX(-50%);
+    z-index: 30; padding: 8px 18px; border-radius: 18px; background: rgba(0,0,0,.6); font-size: 15px;
+    font-weight: 700; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap;
+  }
+  #toast.on { opacity: 1; }
+  .ov {
+    position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center;
+    background: rgba(10,12,30,.6); padding: 20px;
+  }
+  .ov.on { display: flex; }
+  .card {
+    width: min(360px, 100%); border-radius: 26px; padding: 24px 22px 20px; text-align: center;
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.3);
+    -webkit-backdrop-filter: blur(24px) saturate(170%); backdrop-filter: blur(24px) saturate(170%);
+    box-shadow: 0 20px 60px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.5);
+  }
+  .card h1 { margin: 0 0 4px; font-size: 25px; }
+  .card .sub { opacity: .8; font-size: 14px; margin-bottom: 14px; }
+  .card .how {
+    text-align: left; font-size: 13.5px; line-height: 1.65; opacity: .92; background: rgba(0,0,0,.18);
+    border-radius: 14px; padding: 10px 12px; margin: 10px 0 16px;
+  }
+  .best-line { font-size: 12px; opacity: .7; margin: 8px 0 4px; line-height: 1.6; min-height: 18px; }
+  .btn {
+    display: block; width: 100%; height: 50px; margin-top: 10px; border: 0; border-radius: 16px;
+    font-size: 17px; font-weight: 700; color: #fff;
+    background: linear-gradient(180deg, #34c3ff, #0a83d6); box-shadow: 0 8px 20px rgba(10,140,255,.4), inset 0 1px 0 rgba(255,255,255,.4);
+  }
+  .btn.alt { background: rgba(255,255,255,.18); box-shadow: none; }
+  .card .big { font-size: 34px; font-weight: 800; margin: 8px 0; }
+  .card .credit { margin-top: 14px; font-size: 11px; opacity: .5; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <a href="../">‹ 大厅</a>
+    <span class="sp"></span>
+    <span class="pill" id="pillLevel">关卡 1/6</span>
+    <span class="pill" id="pillMoves">旋转 0</span>
+    <span class="pill" id="pillTime">00</span>
+    <button id="btnRestart">重来</button>
+  </div>
+  <div id="stage"><canvas id="cv"></canvas></div>
+</div>
+<div id="toast"></div>
+
+<div class="ov on" id="startOv">
+  <div class="card">
+    <h1>🔧 拼水管</h1>
+    <div class="sub">旋转管道，把水源接到出口</div>
+    <div class="how">
+      点击格子让管道顺时针旋转 90°；把发光的水流从水源（💧）一路接通到出口（🌀）即可过关。
+      共 6 关，网格由小到大，每关都有时间限制，超时需要重来本关。已连通的管道会发亮，帮助你判断进度。
+    </div>
+    <div class="best-line" id="bestLine"></div>
+    <button class="btn" id="btnStart">开始游戏</button>
+    <div class="credit">代码与图形均为原创绘制（Canvas） · MIT 开源</div>
+  </div>
+</div>
+
+<div class="ov" id="winOv">
+  <div class="card">
+    <h1 id="winTitle">🎉 通关！</h1>
+    <div class="sub" id="winSub"></div>
+    <div class="big" id="winStat"></div>
+    <div class="best-line" id="winBest"></div>
+    <button class="btn" id="btnNext">下一关</button>
+    <button class="btn alt" id="btnBackHome" style="display:none">返回大厅</button>
+  </div>
+</div>
+
+<div class="ov" id="failOv">
+  <div class="card">
+    <h1>⏱ 时间到！</h1>
+    <div class="sub">管道还没接通，再试一次吧</div>
+    <button class="btn" id="btnRetry">重玩本关</button>
+    <button class="btn alt" id="btnGiveUp">返回大厅</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+  var BEST_KEY = 'pc-best-time';
+
+  var N_DIR = 1, E_DIR = 2, S_DIR = 4, W_DIR = 8;
+  var OPP = {}; OPP[N_DIR] = S_DIR; OPP[S_DIR] = N_DIR; OPP[E_DIR] = W_DIR; OPP[W_DIR] = E_DIR;
+  var DX = {}; DX[N_DIR] = 0; DX[S_DIR] = 0; DX[E_DIR] = 1; DX[W_DIR] = -1;
+  var DY = {}; DY[N_DIR] = -1; DY[S_DIR] = 1; DY[E_DIR] = 0; DY[W_DIR] = 0;
+  var ALL_DIRS = [N_DIR, E_DIR, S_DIR, W_DIR];
+  var CW_NEXT = {}; CW_NEXT[N_DIR] = E_DIR; CW_NEXT[E_DIR] = S_DIR; CW_NEXT[S_DIR] = W_DIR; CW_NEXT[W_DIR] = N_DIR;
+
+  function rotateMask(mask) {
+    var out = 0;
+    for (var i = 0; i < ALL_DIRS.length; i++) { var d = ALL_DIRS[i]; if (mask & d) out |= CW_NEXT[d]; }
+    return out;
+  }
+  function rotateMaskTimes(mask, times) {
+    var m = mask;
+    for (var i = 0; i < times; i++) m = rotateMask(m);
+    return m;
+  }
+
+  var LEVELS = [
+    { n: 4, time: 30 },
+    { n: 5, time: 40 },
+    { n: 6, time: 50 },
+    { n: 6, time: 55 },
+    { n: 7, time: 65 },
+    { n: 8, time: 80 }
+  ];
+
+  var LOGICAL = 480;
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var stage = document.getElementById('stage');
+  var startOv = document.getElementById('startOv');
+  var winOv = document.getElementById('winOv');
+  var failOv = document.getElementById('failOv');
+  var toastEl = document.getElementById('toast');
+  var pillLevel = document.getElementById('pillLevel');
+  var pillMoves = document.getElementById('pillMoves');
+  var pillTime = document.getElementById('pillTime');
+
+  var levelIdx = 0;
+  var N = 4;
+  var cellBase = [];   // base (solved) connection mask per cell
+  var cellRot = [];    // current rotation steps (0-3) per cell
+  var cellFixed = [];  // true for source/sink (not rotatable)
+  var sourceCell = 0, sinkCell = 0;
+  var totalMoves = 0;
+  var levelMoves = 0;
+  var timeLeft = 0;
+  var running = false;
+  var won = false;
+  var rafId = null;
+  var lastT = 0;
+  var totalStart = 0;
+  var wetSet = null;
+
+  function idx(r, c) { return r * N + c; }
+
+  function buildSpanningTree(n) {
+    var total = n * n;
+    var visited = new Array(total).fill(false);
+    var base = new Array(total).fill(0);
+    var start = 0;
+    visited[start] = true;
+    var frontier = [];
+    function pushFrontier(cell) {
+      var r = Math.floor(cell / n), c = cell % n;
+      for (var i = 0; i < ALL_DIRS.length; i++) {
+        var d = ALL_DIRS[i];
+        var nr = r + DY[d], nc = c + DX[d];
+        if (nr < 0 || nr >= n || nc < 0 || nc >= n) continue;
+        var to = nr * n + nc;
+        if (!visited[to]) frontier.push({ from: cell, to: to, dir: d });
+      }
+    }
+    pushFrontier(start);
+    var count = 1;
+    while (count < total && frontier.length) {
+      var i = Math.floor(Math.random() * frontier.length);
+      var e = frontier[i];
+      frontier.splice(i, 1);
+      if (visited[e.to]) continue;
+      visited[e.to] = true;
+      count++;
+      base[e.from] |= e.dir;
+      base[e.to] |= OPP[e.dir];
+      pushFrontier(e.to);
+    }
+    return base;
+  }
+
+  function bfsFarthest(base, n, startCell) {
+    var total = n * n;
+    var dist = new Array(total).fill(-1);
+    dist[startCell] = 0;
+    var q = [startCell];
+    var farthest = startCell;
+    while (q.length) {
+      var cur = q.shift();
+      if (dist[cur] > dist[farthest]) farthest = cur;
+      var r = Math.floor(cur / n), c = cur % n;
+      for (var i = 0; i < ALL_DIRS.length; i++) {
+        var d = ALL_DIRS[i];
+        if (!(base[cur] & d)) continue;
+        var nr = r + DY[d], nc = c + DX[d];
+        var to = nr * n + nc;
+        if (dist[to] === -1) { dist[to] = dist[cur] + 1; q.push(to); }
+      }
+    }
+    return farthest;
+  }
+
+  function popcount(m) { m = m & 15; return ((m >> 0) & 1) + ((m >> 1) & 1) + ((m >> 2) & 1) + ((m >> 3) & 1); }
+
+  function generateLevel(n) {
+    var base = buildSpanningTree(n);
+    var a = bfsFarthest(base, n, 0);
+    var b = bfsFarthest(base, n, a);
+    cellBase = base;
+    cellFixed = new Array(n * n).fill(false);
+    cellRot = new Array(n * n).fill(0);
+    for (var i = 0; i < n * n; i++) {
+      if (i === a || i === b) { cellFixed[i] = true; cellRot[i] = 0; }
+      else cellRot[i] = Math.floor(Math.random() * 4);
+    }
+    sourceCell = a; sinkCell = b;
+  }
+
+  function currentMask(i) { return rotateMaskTimes(cellBase[i], cellRot[i]); }
+
+  function computeWet() {
+    var set = new Array(N * N).fill(false);
+    set[sourceCell] = true;
+    var q = [sourceCell];
+    while (q.length) {
+      var cur = q.shift();
+      var r = Math.floor(cur / N), c = cur % N;
+      var mask = currentMask(cur);
+      for (var i = 0; i < ALL_DIRS.length; i++) {
+        var d = ALL_DIRS[i];
+        if (!(mask & d)) continue;
+        var nr = r + DY[d], nc = c + DX[d];
+        if (nr < 0 || nr >= N || nc < 0 || nc >= N) continue;
+        var to = nr * N + nc;
+        if (set[to]) continue;
+        var toMask = currentMask(to);
+        if (toMask & OPP[d]) { set[to] = true; q.push(to); }
+      }
+    }
+    return set;
+  }
+
+  function fmtTime(s) { return String(Math.max(0, Math.ceil(s))); }
+
+  function showToast(t, ms) {
+    toastEl.textContent = t; toastEl.classList.add('on');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { toastEl.classList.remove('on'); }, ms || 1200);
+  }
+
+  function fitCanvas() {
+    var r = stage.getBoundingClientRect();
+    var size = Math.max(140, Math.min(r.width - 8, r.height - 8, 560));
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    cv.style.width = size + 'px'; cv.style.height = size + 'px';
+    cv.width = Math.floor(size * dpr); cv.height = Math.floor(size * dpr);
+    ctx.setTransform(dpr * (size / LOGICAL), 0, 0, dpr * (size / LOGICAL), 0, 0);
+    draw();
+  }
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, LOGICAL, LOGICAL);
+    ctx.fillStyle = '#0c0e18';
+    rr(0, 0, LOGICAL, LOGICAL, 16); ctx.fill();
+    if (!cellBase.length) return;
+    var pad = 6;
+    var cell = (LOGICAL - pad * 2) / N;
+    var wet = wetSet || computeWet();
+    for (var i = 0; i < N * N; i++) {
+      var r = Math.floor(i / N), c = i % N;
+      var cx = pad + c * cell + cell / 2;
+      var cy = pad + r * cell + cell / 2;
+      var mask = currentMask(i);
+      var isWet = wet[i];
+      var isSource = i === sourceCell, isSink = i === sinkCell;
+      // cell backdrop
+      ctx.fillStyle = 'rgba(255,255,255,.03)';
+      rr(pad + c * cell + 1, pad + r * cell + 1, cell - 2, cell - 2, cell * 0.12);
+      ctx.fill();
+      var pipeColor = isWet ? (isSink ? '#ffd35c' : '#3ad0ff') : '#2b3350';
+      var pipeW = cell * 0.26;
+      ctx.strokeStyle = pipeColor;
+      ctx.lineWidth = pipeW;
+      ctx.lineCap = 'round';
+      for (var k = 0; k < ALL_DIRS.length; k++) {
+        var d = ALL_DIRS[k];
+        if (!(mask & d)) continue;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + DX[d] * cell / 2, cy + DY[d] * cell / 2);
+        ctx.stroke();
+      }
+      if (mask) {
+        ctx.fillStyle = pipeColor;
+        ctx.beginPath(); ctx.arc(cx, cy, pipeW / 2, 0, Math.PI * 2); ctx.fill();
+      }
+      if (isSource || isSink) {
+        ctx.fillStyle = isSource ? '#2fe07a' : (isWet ? '#ffd35c' : '#8a6d2c');
+        ctx.beginPath(); ctx.arc(cx, cy, cell * 0.22, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#0c0e18';
+        ctx.font = (cell * 0.28) + 'px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(isSource ? '💧' : '🌀', cx, cy + cell * 0.02);
+      }
+    }
+  }
+
+  function cellFromPoint(clientX, clientY) {
+    var rect = cv.getBoundingClientRect();
+    var px = (clientX - rect.left) / rect.width * LOGICAL;
+    var py = (clientY - rect.top) / rect.height * LOGICAL;
+    var pad = 6;
+    var cell = (LOGICAL - pad * 2) / N;
+    var c = Math.floor((px - pad) / cell);
+    var r = Math.floor((py - pad) / cell);
+    if (r < 0 || r >= N || c < 0 || c >= N) return -1;
+    return idx(r, c);
+  }
+
+  cv.addEventListener('pointerdown', function (e) {
+    if (!running || won) return;
+    var pos = cellFromPoint(e.clientX, e.clientY);
+    if (pos === -1 || cellFixed[pos]) return;
+    cellRot[pos] = (cellRot[pos] + 1) % 4;
+    levelMoves++; totalMoves++;
+    pillMoves.textContent = '旋转 ' + totalMoves;
+    wetSet = computeWet();
+    draw();
+    if (wetSet[sinkCell]) onLevelWin();
+  });
+
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+  addEventListener('resize', fitCanvas);
+
+  function tick(t) {
+    if (!running) return;
+    var dt = lastT ? (t - lastT) / 1000 : 0;
+    lastT = t;
+    if (!won) {
+      timeLeft -= dt;
+      pillTime.textContent = fmtTime(timeLeft);
+      pillTime.classList.toggle('warn', timeLeft < 10);
+      if (timeLeft <= 0) { onTimeout(); return; }
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function startLevel(i) {
+    levelIdx = i;
+    var cfg = LEVELS[i];
+    N = cfg.n;
+    timeLeft = cfg.time;
+    levelMoves = 0;
+    won = false;
+    running = true;
+    lastT = 0;
+    generateLevel(N);
+    wetSet = computeWet();
+    pillLevel.textContent = '关卡 ' + (i + 1) + '/' + LEVELS.length;
+    pillMoves.textContent = '旋转 ' + totalMoves;
+    pillTime.textContent = fmtTime(timeLeft);
+    pillTime.classList.remove('warn');
+    fitCanvas();
+    showToast('第 ' + (i + 1) + ' 关：' + N + '×' + N, 1000);
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function onTimeout() {
+    running = false;
+    cancelAnimationFrame(rafId);
+    failOv.classList.add('on');
+  }
+
+  function onLevelWin() {
+    won = true;
+    running = false;
+    cancelAnimationFrame(rafId);
+    draw();
+    var isLast = levelIdx === LEVELS.length - 1;
+    document.getElementById('winTitle').textContent = isLast ? '🏆 全部通关！' : '🎉 关卡完成！';
+    document.getElementById('winSub').textContent = 'N×N = ' + N + '×' + N;
+    document.getElementById('winStat').textContent = levelMoves + ' 次旋转';
+    var btnNext = document.getElementById('btnNext');
+    var btnBack = document.getElementById('btnBackHome');
+    var bestLine = document.getElementById('winBest');
+    if (isLast) {
+      var totalTime = (performance.now() - totalStart) / 1000;
+      var best = +store.get(BEST_KEY) || 0;
+      var improved = !best || totalTime < best;
+      if (improved) store.set(BEST_KEY, totalTime);
+      bestLine.textContent = '总用时 ' + fmtTime(totalTime) + ' 秒 · 总旋转 ' + totalMoves + (improved ? '（新纪录！）' : '');
+      btnNext.style.display = 'none';
+      btnBack.style.display = 'block';
+    } else {
+      bestLine.textContent = '';
+      btnNext.style.display = 'block';
+      btnBack.style.display = 'none';
+    }
+    winOv.classList.add('on');
+  }
+
+  function bestLineText() {
+    var best = +store.get(BEST_KEY) || 0;
+    return best ? ('历史最佳总用时：' + fmtTime(best) + ' 秒') : '暂无通关记录';
+  }
+
+  document.getElementById('bestLine').textContent = bestLineText();
+
+  document.getElementById('btnStart').addEventListener('click', function () {
+    startOv.classList.remove('on');
+    totalMoves = 0;
+    totalStart = performance.now();
+    startLevel(0);
+  });
+  document.getElementById('btnNext').addEventListener('click', function () {
+    winOv.classList.remove('on');
+    startLevel(levelIdx + 1);
+  });
+  document.getElementById('btnBackHome').addEventListener('click', function () {
+    winOv.classList.remove('on');
+    document.getElementById('bestLine').textContent = bestLineText();
+    startOv.classList.add('on');
+  });
+  document.getElementById('btnRetry').addEventListener('click', function () {
+    failOv.classList.remove('on');
+    startLevel(levelIdx);
+  });
+  document.getElementById('btnGiveUp').addEventListener('click', function () {
+    failOv.classList.remove('on');
+    document.getElementById('bestLine').textContent = bestLineText();
+    startOv.classList.add('on');
+  });
+  document.getElementById('btnRestart').addEventListener('click', function () {
+    if (!cellBase.length) return;
+    startLevel(levelIdx);
+  });
+
+  fitCanvas();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>数字华容道</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; touch-action: none;
+    background: #1b1e2e; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #hud {
+    display: flex; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top) + 8px) 14px 8px;
+    font-size: 14px; font-weight: 600;
+  }
+  #hud a { color: #fff; text-decoration: none; opacity: .85; }
+  #hud .sp { flex: 1; }
+  #hud .pill {
+    padding: 4px 10px; border-radius: 12px; background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.22); font-variant-numeric: tabular-nums;
+  }
+  #hud button {
+    border: 0; border-radius: 12px; padding: 6px 12px; background: rgba(255,255,255,.18); color: #fff;
+    font-size: 13px; font-weight: 600;
+  }
+  #stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 10px; min-height: 0; }
+  #stage canvas { display: block; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.4); touch-action: none; }
+  .ov {
+    position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center;
+    background: rgba(10,12,30,.6); padding: 20px;
+  }
+  .ov.on { display: flex; }
+  .card {
+    width: min(360px, 100%); border-radius: 26px; padding: 24px 22px 20px; text-align: center;
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.3);
+    -webkit-backdrop-filter: blur(24px) saturate(170%); backdrop-filter: blur(24px) saturate(170%);
+    box-shadow: 0 20px 60px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.5);
+  }
+  .card h1 { margin: 0 0 4px; font-size: 26px; }
+  .card .sub { opacity: .8; font-size: 14px; margin-bottom: 14px; }
+  .card .how {
+    text-align: left; font-size: 13.5px; line-height: 1.65; opacity: .92; background: rgba(0,0,0,.18);
+    border-radius: 14px; padding: 10px 12px; margin: 10px 0 16px;
+  }
+  .sizes { display: flex; gap: 10px; margin-bottom: 6px; }
+  .sizes button {
+    flex: 1; padding: 12px 0; border-radius: 14px; border: 2px solid rgba(255,255,255,.25);
+    background: rgba(255,255,255,.08); color: #fff; font-size: 16px; font-weight: 700;
+  }
+  .sizes button.on { border-color: #3aa0ff; background: rgba(58,160,255,.3); }
+  .best-line { font-size: 12px; opacity: .7; margin: 8px 0 14px; line-height: 1.6; min-height: 34px; }
+  .btn {
+    display: block; width: 100%; height: 50px; margin-top: 10px; border: 0; border-radius: 16px;
+    font-size: 17px; font-weight: 700; color: #fff;
+    background: linear-gradient(180deg, #3aa0ff, #0a6cff); box-shadow: 0 8px 20px rgba(10,108,255,.4), inset 0 1px 0 rgba(255,255,255,.4);
+  }
+  .btn.alt { background: rgba(255,255,255,.18); box-shadow: none; }
+  .card .big { font-size: 40px; font-weight: 800; margin: 8px 0; }
+  .card .credit { margin-top: 14px; font-size: 11px; opacity: .5; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <a href="../">‹ 大厅</a>
+    <span class="sp"></span>
+    <span class="pill" id="pillMoves">步数 0</span>
+    <span class="pill" id="pillTime">00:00</span>
+    <button id="btnRestart">重新开始</button>
+  </div>
+  <div id="stage"><canvas id="cv"></canvas></div>
+</div>
+
+<div class="ov on" id="startOv">
+  <div class="card">
+    <h1>🔢 数字华容道</h1>
+    <div class="sub">经典滑块拼图，选择宫格难度</div>
+    <div class="how">
+      点击与空格相邻的数字方块使其滑入空格；也可以在拼图区域上下左右滑动手指来移动。
+      将数字按从左到右、从上到下的顺序 1、2、3……依次排好，空格留在右下角即可通关。
+      步数越少、用时越短，成绩越好。
+    </div>
+    <div class="sizes" id="sizePicker">
+      <button data-n="3">3×3</button>
+      <button data-n="4">4×4</button>
+      <button data-n="5">5×5</button>
+    </div>
+    <div class="best-line" id="bestLine"></div>
+    <button class="btn" id="btnStart">开始游戏</button>
+    <div class="credit">代码与图形均为原创绘制（Canvas） · MIT 开源</div>
+  </div>
+</div>
+
+<div class="ov" id="winOv">
+  <div class="card">
+    <h1>🎉 拼图完成！</h1>
+    <div class="sub" id="winSize"></div>
+    <div class="big" id="winStat"></div>
+    <div class="best-line" id="winBest"></div>
+    <button class="btn" id="btnAgain">再玩一次</button>
+    <button class="btn alt" id="btnChangeSize">更换难度</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var stage = document.getElementById('stage');
+  var startOv = document.getElementById('startOv');
+  var winOv = document.getElementById('winOv');
+  var pillMoves = document.getElementById('pillMoves');
+  var pillTime = document.getElementById('pillTime');
+
+  var N = 3;           // grid size
+  var tiles = [];       // tiles[r*N+c] = value (0 = blank), 1..N*N-1 otherwise
+  var blankPos = 0;     // index of blank
+  var moves = 0;
+  var startTime = 0;
+  var elapsed = 0;
+  var timerId = null;
+  var playing = false;
+  var won = false;
+  var LOGICAL = 400;    // logical canvas size
+
+  function keyMoves(n) { return 'sp-best-moves-' + n; }
+  function keyTime(n) { return 'sp-best-time-' + n; }
+
+  function fmtTime(s) {
+    s = Math.max(0, Math.floor(s));
+    var m = Math.floor(s / 60), r = s % 60;
+    return (m < 10 ? '0' + m : m) + ':' + (r < 10 ? '0' + r : r);
+  }
+
+  function solvedArray(n) {
+    var a = [];
+    for (var i = 1; i < n * n; i++) a.push(i);
+    a.push(0);
+    return a;
+  }
+
+  function isSolved() {
+    for (var i = 0; i < tiles.length - 1; i++) if (tiles[i] !== i + 1) return false;
+    return tiles[tiles.length - 1] === 0;
+  }
+
+  function idx(r, c) { return r * N + c; }
+
+  function neighborsOf(pos) {
+    var r = Math.floor(pos / N), c = pos % N;
+    var out = [];
+    if (r > 0) out.push(idx(r - 1, c));
+    if (r < N - 1) out.push(idx(r + 1, c));
+    if (c > 0) out.push(idx(r, c - 1));
+    if (c < N - 1) out.push(idx(r, c + 1));
+    return out;
+  }
+
+  function swap(i, j) {
+    var t = tiles[i]; tiles[i] = tiles[j]; tiles[j] = t;
+  }
+
+  // shuffle by performing many random legal moves from the solved state,
+  // which guarantees the resulting position is always solvable.
+  function shuffle(n) {
+    tiles = solvedArray(n);
+    blankPos = tiles.length - 1;
+    var lastFrom = -1;
+    var steps = n * n * 60;
+    for (var i = 0; i < steps; i++) {
+      var opts = neighborsOf(blankPos).filter(function (p) { return p !== lastFrom; });
+      if (!opts.length) opts = neighborsOf(blankPos);
+      var pick = opts[Math.floor(Math.random() * opts.length)];
+      swap(blankPos, pick);
+      lastFrom = blankPos;
+      blankPos = pick;
+    }
+    if (isSolved()) { // astronomically unlikely, but stay correct
+      var a = neighborsOf(blankPos)[0];
+      swap(blankPos, a); blankPos = a;
+    }
+  }
+
+  function tryMove(pos) {
+    if (!playing || won) return;
+    if (neighborsOf(blankPos).indexOf(pos) === -1) return;
+    swap(blankPos, pos);
+    blankPos = pos;
+    moves++;
+    pillMoves.textContent = '步数 ' + moves;
+    draw();
+    if (isSolved()) onWin();
+  }
+
+  function moveDir(dir) {
+    // dir: 'up' => tile below blank slides up (blank moves down), matching arrow-key convention
+    var r = Math.floor(blankPos / N), c = blankPos % N;
+    var target = -1;
+    if (dir === 'up' && r < N - 1) target = idx(r + 1, c);
+    if (dir === 'down' && r > 0) target = idx(r - 1, c);
+    if (dir === 'left' && c < N - 1) target = idx(r, c + 1);
+    if (dir === 'right' && c > 0) target = idx(r, c - 1);
+    if (target !== -1) tryMove(target);
+  }
+
+  function startTimer() {
+    stopTimer();
+    startTime = performance.now();
+    elapsed = 0;
+    timerId = setInterval(function () {
+      elapsed = (performance.now() - startTime) / 1000;
+      pillTime.textContent = fmtTime(elapsed);
+    }, 250);
+  }
+  function stopTimer() { if (timerId) { clearInterval(timerId); timerId = null; } }
+
+  function onWin() {
+    won = true;
+    playing = false;
+    stopTimer();
+    var bestM = +store.get(keyMoves(N)) || 0;
+    var bestT = +store.get(keyTime(N)) || 0;
+    var improM = !bestM || moves < bestM;
+    var improT = !bestT || elapsed < bestT;
+    if (improM) store.set(keyMoves(N), moves);
+    if (improT) store.set(keyTime(N), elapsed);
+    document.getElementById('winSize').textContent = N + '×' + N + ' 宫格';
+    document.getElementById('winStat').textContent = moves + ' 步 · ' + fmtTime(elapsed);
+    var lines = [];
+    lines.push('最佳步数：' + (improM ? moves : bestM) + (improM ? '（新纪录！）' : ''));
+    lines.push('最佳用时：' + fmtTime(improT ? elapsed : bestT) + (improT ? '（新纪录！）' : ''));
+    document.getElementById('winBest').innerHTML = lines.join('<br>');
+    winOv.classList.add('on');
+  }
+
+  function fitCanvas() {
+    var r = stage.getBoundingClientRect();
+    var size = Math.max(120, Math.min(r.width - 8, r.height - 8, 520));
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    cv.style.width = size + 'px'; cv.style.height = size + 'px';
+    cv.width = Math.floor(size * dpr); cv.height = Math.floor(size * dpr);
+    ctx.setTransform(dpr * (size / LOGICAL), 0, 0, dpr * (size / LOGICAL), 0, 0);
+    draw();
+  }
+
+  function tileColor(v, n) {
+    var hue = 205 + (v * 137.5) % 60;
+    return 'hsl(' + hue + ', 62%, ' + (38 + (v % 3) * 5) + '%)';
+  }
+
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, LOGICAL, LOGICAL);
+    ctx.fillStyle = '#121420';
+    rr(0, 0, LOGICAL, LOGICAL, 18); ctx.fill();
+    var pad = 8;
+    var cell = (LOGICAL - pad * 2) / N;
+    var gap = Math.max(3, cell * 0.045);
+    for (var i = 0; i < tiles.length; i++) {
+      var v = tiles[i];
+      var r = Math.floor(i / N), c = i % N;
+      var x = pad + c * cell, y = pad + r * cell;
+      if (v === 0) continue;
+      var w = cell - gap, h = cell - gap;
+      ctx.fillStyle = tileColor(v, N);
+      rr(x + gap / 2, y + gap / 2, w, h, cell * 0.14);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.14)';
+      rr(x + gap / 2, y + gap / 2, w, h * 0.42, cell * 0.14);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = '700 ' + Math.floor(cell * 0.4) + 'px -apple-system,sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(v), x + cell / 2, y + cell / 2 + cell * 0.02);
+    }
+  }
+
+  function cellFromPoint(clientX, clientY) {
+    var rect = cv.getBoundingClientRect();
+    var px = (clientX - rect.left) / rect.width * LOGICAL;
+    var py = (clientY - rect.top) / rect.height * LOGICAL;
+    var pad = 8;
+    var cell = (LOGICAL - pad * 2) / N;
+    var c = Math.floor((px - pad) / cell);
+    var r = Math.floor((py - pad) / cell);
+    if (r < 0 || r >= N || c < 0 || c >= N) return -1;
+    return idx(r, c);
+  }
+
+  // click / tap to move an adjacent tile
+  cv.addEventListener('pointerdown', function (e) {
+    var pos = cellFromPoint(e.clientX, e.clientY);
+    if (pos === -1) return;
+    dragStart = { x: e.clientX, y: e.clientY, pos: pos };
+  });
+  var dragStart = null;
+  cv.addEventListener('pointerup', function (e) {
+    if (!dragStart) return;
+    var dx = e.clientX - dragStart.x, dy = e.clientY - dragStart.y;
+    var dist = Math.hypot(dx, dy);
+    if (dist < 18) {
+      // treat as a tap on the starting cell
+      tryMove(dragStart.pos);
+    } else if (dist >= 18) {
+      // swipe gesture -> move blank in the swipe direction (arrow-key convention)
+      if (Math.abs(dx) > Math.abs(dy)) moveDir(dx > 0 ? 'right' : 'left');
+      else moveDir(dy > 0 ? 'down' : 'up');
+    }
+    dragStart = null;
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (!playing || won) return;
+    if (e.key === 'ArrowUp') { e.preventDefault(); moveDir('up'); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); moveDir('down'); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); moveDir('left'); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); moveDir('right'); }
+  });
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+
+  addEventListener('resize', fitCanvas);
+
+  function newGame(n) {
+    N = n;
+    shuffle(N);
+    moves = 0;
+    won = false;
+    playing = true;
+    pillMoves.textContent = '步数 0';
+    pillTime.textContent = '00:00';
+    fitCanvas();
+    startTimer();
+  }
+
+  function bestLineText(n) {
+    var bm = +store.get(keyMoves(n)) || 0;
+    var bt = +store.get(keyTime(n)) || 0;
+    if (!bm) return n + '×' + n + '：暂无记录';
+    return n + '×' + n + ' 最佳：' + bm + ' 步 · ' + fmtTime(bt);
+  }
+
+  var chosenN = 3;
+  var sizePicker = document.getElementById('sizePicker');
+  Array.prototype.forEach.call(sizePicker.querySelectorAll('button'), function (b) {
+    b.addEventListener('click', function () {
+      chosenN = +b.dataset.n;
+      Array.prototype.forEach.call(sizePicker.querySelectorAll('button'), function (x) { x.classList.toggle('on', x === b); });
+      document.getElementById('bestLine').textContent = bestLineText(chosenN);
+    });
+  });
+  sizePicker.querySelector('[data-n="3"]').click();
+
+  document.getElementById('btnStart').addEventListener('click', function () {
+    startOv.classList.remove('on');
+    newGame(chosenN);
+  });
+  document.getElementById('btnRestart').addEventListener('click', function () {
+    if (!playing && !won) return;
+    newGame(N);
+  });
+  document.getElementById('btnAgain').addEventListener('click', function () {
+    winOv.classList.remove('on');
+    newGame(N);
+  });
+  document.getElementById('btnChangeSize').addEventListener('click', function () {
+    winOv.classList.remove('on');
+    playing = false;
+    document.getElementById('bestLine').textContent = bestLineText(chosenN);
+    startOv.classList.add('on');
+  });
+
+  fitCanvas();
+})();
+</script>
+</body>
+</html>
