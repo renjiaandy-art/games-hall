@@ -1,0 +1,21 @@
+[
+  {"slug": "2048", "name": "2048", "desc": "滑动合并数字，挑战 2048", "icon": "🔢", "repo": "2048", "ref": "master", "dir": ".", "license": "MIT", "upstream": "gabrielecirulli/2048", "featured": true},
+  {"slug": "tetris", "name": "俄罗斯方块", "desc": "经典掌机风格，带屏幕按键", "icon": "🧱", "repo": "vue-tetris", "ref": "master", "dir": "docs", "license": "MIT", "upstream": "Binaryify/vue-tetris", "featured": true},
+  {"slug": "tower", "name": "盖楼", "desc": "看准时机放下楼层，盖得越高越好", "icon": "🏢", "repo": "tower_game", "ref": "master", "dir": ".", "license": "MIT", "upstream": "iamkun/tower_game", "featured": true},
+  {"slug": "xiangqi", "name": "中国象棋", "desc": "象棋小巫师，和电脑对弈", "icon": "♟️", "repo": "xqwlight", "ref": "master", "dir": "JavaScript", "license": "GPL-2.0", "upstream": "xqbase/xqwlight", "featured": true},
+  {"slug": "gobang", "name": "五子棋", "desc": "人机对战，先连成五子者胜", "icon": "⚫", "repo": "gobang", "ref": "main", "dir": ".", "license": "MIT", "upstream": "mumuy/gobang", "patch": "mumuy_clean_index", "featured": true},
+  {"slug": "sudoku", "name": "数独", "desc": "500 多道题，从简单到地狱难度", "icon": "🔲", "repo": "super-sudoku", "ref": "master", "dir": "dist", "license": "MIT", "upstream": "TN1ck/super-sudoku",
+   "build": ["npm ci --no-audit --no-fund", "npx vite build --base ./"]},
+  {"slug": "dino", "name": "小恐龙", "desc": "Chrome 断网小恐龙，点击跳跃", "icon": "🦖", "repo": "t-rex-runner", "ref": "gh-pages", "dir": ".", "license": "BSD-3-Clause", "upstream": "wayou/t-rex-runner"},
+  {"slug": "flappy", "name": "Flappy Bird", "desc": "点击屏幕让小鸟穿过水管", "icon": "🐦", "repo": "floppybird", "ref": "gh-pages", "dir": ".", "license": "Apache-2.0", "upstream": "nebez/floppybird"},
+  {"slug": "snake", "name": "贪吃蛇", "desc": "经典贪吃蛇", "icon": "🐍", "repo": "JavaScript-Snake", "ref": "master", "dir": "dist", "license": "MIT", "upstream": "patorjk/JavaScript-Snake",
+   "build": ["npm ci --no-audit --no-fund", "npx parcel build src/index.html --public-url ./ --no-source-maps"]},
+  {"slug": "minesweeper", "name": "扫雷", "desc": "emoji 版扫雷，长按插旗", "icon": "💣", "repo": "emoji-minesweeper", "ref": "gh-pages", "dir": ".", "license": "MIT", "upstream": "muan/emoji-minesweeper"},
+  {"slug": "pacman", "name": "吃豆人", "desc": "经典街机吃豆人（需要键盘方向键）", "icon": "🟡", "repo": "pacman", "ref": "master", "dir": ".", "license": "MIT", "upstream": "mumuy/pacman", "patch": "mumuy_clean_index"},
+  {"slug": "hextris", "name": "Hextris", "desc": "六边形版俄罗斯方块，节奏很快", "icon": "⬡", "repo": "hextris", "ref": "gh-pages", "dir": ".", "license": "GPL-3.0", "upstream": "Hextris/hextris"},
+  {"slug": "yang", "name": "羊了个羊", "desc": "三消堆叠小游戏", "icon": "🐑", "repo": "xlegex", "ref": "main", "dir": "dist", "license": "MIT", "upstream": "chenxch/xlegex",
+   "prebuild_sanitize": ["index.html"],
+   "build": ["corepack enable", "pnpm install --no-frozen-lockfile", "npx vite build --base ./"]},
+  {"slug": "adarkroom", "name": "小黑屋", "desc": "A Dark Room 文字冒险，中文版", "icon": "🔥", "repo": "adarkroom", "ref": "main", "dir": ".", "license": "MPL-2.0", "upstream": "doublespeakgames/adarkroom", "patch": "adarkroom_mobile", "entry": "?lang=zh_cn"},
+  {"slug": "td", "name": "塔防", "desc": "HTML5 塔防（电脑上玩更顺手）", "icon": "🏰", "repo": "html5-tower-defense", "ref": "master", "dir": "build", "license": "MIT", "upstream": "oldj/html5-tower-defense", "patch": "td_index"}
+]
