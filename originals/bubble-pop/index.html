@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>泡泡消消乐</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640, R = 15;
+  const MARGIN = 10;
+  const EVEN_COLS = Math.floor((W - 2 * MARGIN) / (2 * R)); // 11
+  const ODD_COLS = EVEN_COLS - 1; // 10
+  const ROW_H = R * Math.sqrt(3);
+  const TOP_Y = 6;
+  const LOSE_Y = 560;
+  const PIVOT = { x: W / 2, y: H - 46 };
+  const COLORS = ['#e0524a', '#f0ad4e', '#f4e03c', '#5cc75c', '#4fa8ff', '#b46ee0'];
+  const SHOTS_PER_ROW = 6;
+
+  RJ.init({
+    id: 'bubble-pop', title: '泡泡消消乐', icon: '🫧', subtitle: '瞄准发射同色泡泡，3 个相连即可消除',
+    howto: '• 按住拖动瞄准（可撞墙反弹），松手发射彩色泡泡<br>• 键盘：←→ 调整角度，空格发射<br>• 3 个及以上同色相连就会消除，悬空的泡泡也会一起掉落<br>• 每打几发泡泡墙会下压一次，压到底线就失败；清空全部泡泡即可过关',
+    onStart: () => startLevel(1, 0), onRestart: () => startLevel(1, 0),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['lv', 'score', 'next']);
+
+  let rows, level, score, shotsSince, running, aiming, aimAngle, flying, particles, falling, queue;
+
+  function colCount(type) { return type === 'even' ? EVEN_COLS : ODD_COLS; }
+  function xFor(type, c) { return MARGIN + R + (type === 'odd' ? R : 0) + c * 2 * R; }
+  function yForIndex(i) { return TOP_Y + i * ROW_H + R; }
+  function activeColorCount(lv) { return Math.min(6, 3 + lv); }
+  function randomColor(n) { return COLORS[RJ.randi(0, n - 1)]; }
+
+  function randomRow(type, n) {
+    const cells = new Array(colCount(type));
+    for (let c = 0; c < cells.length; c++) cells[c] = randomColor(n);
+    return { type, cells };
+  }
+
+  function startLevel(lv, sc) {
+    level = lv; score = sc; running = true; shotsSince = 0; flying = null; particles = []; falling = [];
+    const n = activeColorCount(lv), startRows = Math.min(9, 4 + lv);
+    rows = [];
+    for (let i = 0; i < startRows; i++) rows.push(randomRow(i % 2 === 0 ? 'even' : 'odd', n));
+    queue = { cur: randomColor(n), next: randomColor(n) };
+    aiming = false; aimAngle = -Math.PI / 2;
+    RJ.toast(`第 ${lv} 关`, 1200);
+  }
+
+  function neighborsOf(i, c, type) {
+    const list = type === 'even'
+      ? [[i, c - 1], [i, c + 1], [i - 1, c - 1], [i - 1, c], [i + 1, c - 1], [i + 1, c]]
+      : [[i, c - 1], [i, c + 1], [i - 1, c], [i - 1, c + 1], [i + 1, c], [i + 1, c + 1]];
+    return list.filter(([ni, nc]) => ni >= 0 && ni < rows.length && nc >= 0 && nc < colCount(rows[ni].type));
+  }
+
+  function occupiedList() {
+    const out = [];
+    for (let i = 0; i < rows.length; i++) for (let c = 0; c < rows[i].cells.length; c++) if (rows[i].cells[c]) out.push([i, c]);
+    return out;
+  }
+
+  function clampAngle(a) {
+    const min = -Math.PI + 0.14, max = -0.14;
+    while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2;
+    if (a > 0) a = a - Math.PI * 2; // normalize toward negative (upward) range
+    return Math.max(min, Math.min(max, a));
+  }
+
+  function updateAim(p) { aimAngle = clampAngle(Math.atan2(p.y - PIVOT.y, p.x - PIVOT.x)); }
+  view.onPointer(
+    (p) => { aiming = true; updateAim(p); },
+    (p) => { if (aiming) updateAim(p); },
+    () => { if (aiming) { aiming = false; fireShot(); } },
+  );
+
+  function fireShot() {
+    if (!running || flying) return;
+    const speed = 480;
+    flying = { x: PIVOT.x, y: PIVOT.y, vx: Math.cos(aimAngle) * speed, vy: Math.sin(aimAngle) * speed, color: queue.cur };
+    queue.cur = queue.next; queue.next = randomColor(activeColorCount(level));
+    RJ.sfx('shoot');
+  }
+
+  function emptyRow(type) { return { type, cells: new Array(colCount(type)).fill(null) }; }
+  function edgeType(neighborRow) { return !neighborRow ? 'even' : (neighborRow.type === 'even' ? 'odd' : 'even'); }
+  function nearestCol(type, x) {
+    let bc = 0, bd = Infinity;
+    for (let c = 0; c < colCount(type); c++) { const d = Math.abs(xFor(type, c) - x); if (d < bd) { bd = d; bc = c; } }
+    return bc;
+  }
+
+  // Returns either {edge:'top'|'bottom', c} to grow the stack by one fresh row,
+  // or {edge:null, i, c} to attach next to an existing empty neighbor cell.
+  function findLandingCell(x, y, hitCeiling) {
+    if (hitCeiling && rows[0]) {
+      let bc = -1, bd = Infinity;
+      for (let c = 0; c < rows[0].cells.length; c++) {
+        if (rows[0].cells[c]) continue;
+        const d = Math.abs(xFor(rows[0].type, c) - x); if (d < bd) { bd = d; bc = c; }
+      }
+      if (bc >= 0) return { edge: null, i: 0, c: bc };
+    }
+    let best = null, bestD = Infinity;
+    for (const [i, c] of occupiedList()) {
+      for (const [ni, nc] of neighborsOf(i, c, rows[i].type)) {
+        if (rows[ni].cells[nc]) continue;
+        const px = xFor(rows[ni].type, nc), py = yForIndex(ni);
+        const d = Math.hypot(px - x, py - y);
+        if (d < bestD) { bestD = d; best = { edge: null, i: ni, c: nc }; }
+      }
+    }
+    if (best) return best;
+    // No empty neighbor anywhere (e.g. a solid block): grow the stack from whichever edge was hit.
+    const distTop = rows.length ? Math.abs(y - yForIndex(0)) : 0;
+    const distBottom = rows.length ? Math.abs(y - yForIndex(rows.length - 1)) : 0;
+    if (rows.length === 0 || distTop <= distBottom) return { edge: 'top', c: nearestCol(edgeType(rows[0]), x) };
+    return { edge: 'bottom', c: nearestCol(edgeType(rows[rows.length - 1]), x) };
+  }
+
+  function addRowTop() {
+    rows.unshift(randomRow(edgeType(rows[0]), activeColorCount(level)));
+  }
+
+  function popGroup(i, c) {
+    const color = rows[i].cells[c];
+    const seen = new Set(), stack = [[i, c]], group = [];
+    seen.add(i + ',' + c);
+    while (stack.length) {
+      const [ci, cc] = stack.pop(); group.push([ci, cc]);
+      for (const [ni, nc] of neighborsOf(ci, cc, rows[ci].type)) {
+        const key = ni + ',' + nc;
+        if (seen.has(key) || rows[ni].cells[nc] !== color) continue;
+        seen.add(key); stack.push([ni, nc]);
+      }
+    }
+    if (group.length < 3) return false;
+    for (const [gi, gc] of group) {
+      particles.push({ x: xFor(rows[gi].type, gc), y: yForIndex(gi), t: 0, color });
+      rows[gi].cells[gc] = null;
+    }
+    score += group.length * 10;
+    RJ.sfx('pop');
+    dropFloating();
+    return true;
+  }
+
+  function dropFloating() {
+    const reached = new Set();
+    const stack = [];
+    if (rows[0]) for (let c = 0; c < rows[0].cells.length; c++) if (rows[0].cells[c]) { stack.push([0, c]); reached.add('0,' + c); }
+    while (stack.length) {
+      const [i, c] = stack.pop();
+      for (const [ni, nc] of neighborsOf(i, c, rows[i].type)) {
+        const key = ni + ',' + nc;
+        if (reached.has(key) || !rows[ni].cells[nc]) continue;
+        reached.add(key); stack.push([ni, nc]);
+      }
+    }
+    let dropped = 0;
+    for (let i = 0; i < rows.length; i++) for (let c = 0; c < rows[i].cells.length; c++) {
+      if (rows[i].cells[c] && !reached.has(i + ',' + c)) {
+        falling.push({ x: xFor(rows[i].type, c), y: yForIndex(i), vy: 40, color: rows[i].cells[c], a: 1 });
+        rows[i].cells[c] = null; dropped++;
+      }
+    }
+    if (dropped) { score += dropped * 15; RJ.sfx('coin'); }
+  }
+
+  function boardEmpty() { return rows.every((r) => r.cells.every((v) => !v)); }
+  function checkLose() {
+    for (let i = 0; i < rows.length; i++) if (rows[i].cells.some(Boolean) && yForIndex(i) + R >= LOSE_Y) return true;
+    return false;
+  }
+
+  function settleShot(hitCeiling) {
+    const land = findLandingCell(flying.x, flying.y, hitCeiling);
+    let cell;
+    if (land.edge === 'top') { rows.unshift(emptyRow(edgeType(rows[0]))); cell = { i: 0, c: land.c }; }
+    else if (land.edge === 'bottom') { rows.push(emptyRow(edgeType(rows[rows.length - 1]))); cell = { i: rows.length - 1, c: land.c }; }
+    else cell = { i: land.i, c: land.c };
+    rows[cell.i].cells[cell.c] = flying.color;
+    RJ.sfx('hit');
+    flying = null;
+    popGroup(cell.i, cell.c);
+    shotsSince++;
+    if (shotsSince >= SHOTS_PER_ROW) { shotsSince = 0; addRowTop(); }
+    if (checkLose()) { running = false; RJ.over({ title: '泡泡墙压到底线', sub: `第 ${level} 关`, score }); return; }
+    if (boardEmpty()) {
+      running = false;
+      RJ.over({ title: '过关！', sub: `第 ${level} 关清空`, score, win: true, next: () => startLevel(level + 1, score) });
+    }
+  }
+
+  function update(dt) {
+    particles = particles.filter((p) => (p.t += dt) < 0.4);
+    falling = falling.filter((f) => { f.vy += 500 * dt; f.y += f.vy * dt; f.a -= dt * 0.6; return f.a > 0 && f.y < H + 20; });
+    if (!running) return;
+    if (flying) {
+      flying.x += flying.vx * dt; flying.y += flying.vy * dt;
+      if (flying.x - R < 0) { flying.x = R; flying.vx *= -1; } else if (flying.x + R > W) { flying.x = W - R; flying.vx *= -1; }
+      let hit = flying.y - R <= TOP_Y, ceiling = hit;
+      if (!hit) for (const [i, c] of occupiedList()) if (Math.hypot(xFor(rows[i].type, c) - flying.x, yForIndex(i) - flying.y) < 2 * R - 3) { hit = true; break; }
+      if (hit) settleShot(ceiling);
+      else if (flying.y < -40) flying = null;
+    }
+    if (!aiming && !flying) {
+      const k = RJ.keys;
+      if (k['ArrowLeft']) aimAngle = clampAngle(aimAngle - 1.6 * dt);
+      if (k['ArrowRight']) aimAngle = clampAngle(aimAngle + 1.6 * dt);
+    }
+  }
+
+  let spaceLatch = false;
+  function pollFireKey() {
+    const down = RJ.keys[' '];
+    if (down && !spaceLatch && !flying && running) fireShot();
+    spaceLatch = down;
+  }
+
+  function drawBubble(x, y, color, scale) {
+    scale = scale || 1;
+    const g = ctx.createRadialGradient(x - R * 0.3, y - R * 0.35, R * 0.15, x, y, R * scale);
+    g.addColorStop(0, 'rgba(255,255,255,.85)'); g.addColorStop(0.25, color); g.addColorStop(1, color);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R * scale - 1, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  function aimPath() {
+    let x = PIVOT.x, y = PIVOT.y, vx = Math.cos(aimAngle), vy = Math.sin(aimAngle);
+    const pts = [[x, y]];
+    let remain = 620, bounces = 0;
+    while (remain > 0 && bounces < 2) {
+      let t = remain;
+      if (vx !== 0) { const tx = vx > 0 ? (W - R - x) / vx : (R - x) / vx; if (tx > 0 && tx < t) t = tx; }
+      if (vy < 0) { const ty = (TOP_Y + R - y) / vy; if (ty > 0 && ty < t) t = ty; }
+      x += vx * t; y += vy * t; remain -= t; pts.push([x, y]);
+      if (y <= TOP_Y + R + 0.5) break;
+      if (x <= R + 0.5 || x >= W - R - 0.5) { vx *= -1; bounces++; } else break;
+    }
+    return pts;
+  }
+
+  function draw() {
+    ctx.fillStyle = '#1a1f33'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(255,90,90,.5)'; ctx.setLineDash([6, 5]); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, LOSE_Y); ctx.lineTo(W, LOSE_Y); ctx.stroke(); ctx.setLineDash([]);
+    for (let i = 0; i < rows.length; i++) for (let c = 0; c < rows[i].cells.length; c++) {
+      const col = rows[i].cells[c]; if (col) drawBubble(xFor(rows[i].type, c), yForIndex(i), col, 1);
+    }
+    for (const f of falling) { ctx.globalAlpha = Math.max(0, f.a); drawBubble(f.x, f.y, f.color, 1); ctx.globalAlpha = 1; }
+    for (const p of particles) { ctx.globalAlpha = 1 - p.t / 0.4; drawBubble(p.x, p.y, p.color, 1 + p.t * 2); ctx.globalAlpha = 1; }
+    if (running && !flying) {
+      const pts = aimPath();
+      ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.setLineDash([5, 6]); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.fillStyle = '#2a3050'; RJ.rr(ctx, PIVOT.x - 22, PIVOT.y - 6, 44, 40, 8); ctx.fill();
+    if (flying) drawBubble(flying.x, flying.y, flying.color, 1);
+    else if (queue) drawBubble(PIVOT.x, PIVOT.y, queue.cur, 1);
+    if (queue) drawBubble(PIVOT.x + 40, PIVOT.y + 14, queue.next, 0.7);
+    pill('lv', `第${level || 1}关`); pill('score', `分数 ${score || 0}`);
+    pill('next', queue ? '下一个 ●' : '');
+  }
+
+  RJ.loop((dt) => { pollFireKey(); update(dt); }, draw);
+
+  level = 1; score = 0; running = false; rows = [randomRow('even', 4)]; particles = []; falling = []; flying = null;
+  queue = { cur: COLORS[0], next: COLORS[1] }; aimAngle = -Math.PI / 2; aiming = false;
+})();
+</script></body></html>
