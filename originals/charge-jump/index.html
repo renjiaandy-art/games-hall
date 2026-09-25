@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>蓄力跳跳</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  const W = 360, H = 600;
+  const ANCHOR = { x: W / 2, y: H * 0.60 };
+  const ISO_X = 0.62, ISO_Y = 0.34; // ground-plane -> screen iso scale
+  const CHARGE_MAX = 1.15;          // seconds to reach full power
+  const JUMP_MIN = 34, JUMP_MAX = 236; // travel distance range at 0%/100% charge
+  const AIR_TIME = 0.46;            // seconds of flight, fixed
+  const ARC_H = 92;                 // visual jump arc height
+  const COLORS = [
+    ['#6ee7ff', '#1f8fb0'], ['#ffd166', '#c98a1c'], ['#c792ff', '#7d3fc4'],
+    ['#8dffb0', '#2f9e5a'], ['#ff9d9d', '#c74d4d'], ['#a8b8ff', '#5468d1'],
+  ];
+  const HEAD = [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }];
+
+  function toIso(wx, wy) { return { x: (wx - wy) * ISO_X, y: (wx + wy) * ISO_Y }; }
+
+  let plats, curIdx, cam, player, charging, chargeT, score, combo, state, flyT, fly, fallT, fallSpin, floats, shakeT;
+
+  RJ.init({
+    id: 'charge-jump', title: '蓄力跳跳', icon: '🦘',
+    subtitle: '按住蓄力，松手起跳，跳到下一个平台上',
+    howto: '• <b>按住屏幕</b>（或空格）蓄力，松开起跳<br>• 蓄力越久跳得越远，跳太远或太近都会掉下去<br>• 落在平台<b>正中心</b>额外加分并累积连击<br>• 掉落即结束，挑战最高分吧',
+    onStart: start, onRestart: start,
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['score', 'combo']);
+
+  function genPlatform(prev, idx) {
+    const hard = Math.min(idx / 26, 1);
+    const heading = prev ? (Math.random() < 0.34 ? prev.headingIdx : (Math.random() < 0.5 ? (prev.headingIdx + 1) % 4 : (prev.headingIdx + 3) % 4)) : 0;
+    const dv = HEAD[heading];
+    const distMin = 62 + hard * 30, distMax = 118 + hard * 78;
+    const dist = distMin + Math.random() * (distMax - distMin);
+    const r = 40 - hard * 15 + Math.random() * 10; // platform radius, shrinks with difficulty
+    const pos = prev ? { x: prev.pos.x + dv.x * dist, y: prev.pos.y + dv.y * dist } : { x: 0, y: 0 };
+    const c = COLORS[Math.floor(Math.random() * COLORS.length)];
+    return { pos, r, headingIdx: heading, shape: Math.random() < 0.5 ? 'box' : 'cyl', h: 34 + Math.random() * 22, top: c[0], side: c[1] };
+  }
+
+  function start() {
+    plats = [genPlatform(null, 0)];
+    plats.push(genPlatform(plats[0], 1));
+    curIdx = 0;
+    const p0 = toIso(plats[0].pos.x, plats[0].pos.y);
+    cam = { x: p0.x, y: p0.y };
+    player = { x: plats[0].pos.x, y: plats[0].pos.y, squat: 0, facing: 0 };
+    charging = false; chargeT = 0; score = 0; combo = 1; state = 'ready';
+    flyT = 0; fly = null; fallT = 0; fallSpin = 0; floats = []; shakeT = 0;
+    RJ.toast('按住蓄力，松手起跳！', 1400);
+  }
+
+  function beginCharge() { if (state === 'ready') { charging = true; chargeT = 0; state = 'charging'; } }
+  function releaseCharge() {
+    if (state !== 'charging') return;
+    charging = false;
+    const power = Math.min(chargeT / CHARGE_MAX, 1);
+    const dist = JUMP_MIN + power * (JUMP_MAX - JUMP_MIN);
+    const cur = plats[curIdx], dv = HEAD[cur.headingIdx];
+    fly = {
+      from: { x: player.x, y: player.y },
+      to: { x: player.x + dv.x * dist, y: player.y + dv.y * dist },
+      power,
+    };
+    flyT = 0; state = 'flying';
+    RJ.sfx('shoot');
+  }
+
+  view.onPointer(() => beginCharge(), null, () => releaseCharge());
+  addEventListener('keydown', (e) => { if (e.key === ' ') { e.preventDefault(); beginCharge(); } });
+  addEventListener('keyup', (e) => { if (e.key === ' ') { e.preventDefault(); releaseCharge(); } });
+
+  function landOn() {
+    const next = plats[curIdx + 1];
+    const d = Math.hypot(fly.to.x - next.pos.x, fly.to.y - next.pos.y);
+    if (d <= next.r) {
+      const perfect = d <= next.r * 0.32;
+      curIdx++;
+      player.x = next.pos.x; player.y = next.pos.y;
+      plats.push(genPlatform(next, curIdx + 1));
+      if (plats.length > 6) plats.shift(), curIdx--;
+      if (perfect) {
+        combo++;
+        const gain = combo;
+        score += gain;
+        floats.push({ txt: `完美 +${gain}`, t: 0, c: '#ffe066' });
+        RJ.sfx('coin');
+      } else {
+        combo = 1;
+        score += 1;
+        floats.push({ txt: '+1', t: 0, c: '#fff' });
+        RJ.sfx('pop');
+      }
+      state = 'ready';
+    } else {
+      state = 'falling'; fallT = 0; fallSpin = (Math.random() - 0.5) * 6;
+      RJ.sfx('bad');
+    }
+  }
+
+  function update(dt) {
+    floats.forEach((f) => (f.t += dt)); floats = floats.filter((f) => f.t < 0.9);
+    if (shakeT > 0) shakeT -= dt;
+    if (state === 'charging') {
+      chargeT = Math.min(chargeT + dt, CHARGE_MAX * 1.15);
+      player.squat = Math.min(chargeT / CHARGE_MAX, 1);
+    } else if (state === 'flying') {
+      flyT += dt;
+      const t = Math.min(flyT / AIR_TIME, 1);
+      player.x = fly.from.x + (fly.to.x - fly.from.x) * t;
+      player.y = fly.from.y + (fly.to.y - fly.from.y) * t;
+      player.arc = Math.sin(t * Math.PI) * (ARC_H * (0.55 + fly.power * 0.7));
+      player.squat = 0;
+      if (t >= 1) { player.arc = 0; landOn(); if (state === 'ready') shakeT = 0.12; }
+    } else if (state === 'falling') {
+      fallT += dt;
+      player.arc = -Math.pow(fallT, 2) * 480;
+      player.x += HEAD[plats[curIdx].headingIdx].x * 40 * dt;
+      player.y += HEAD[plats[curIdx].headingIdx].y * 40 * dt;
+      if (fallT > 0.9 && state !== 'over') {
+        state = 'over';
+        RJ.over({ title: '掉下去了', sub: '稳住蓄力，再挑战一次', score, win: false });
+      }
+    }
+    const targetCam = toIso(plats[curIdx].pos.x, plats[curIdx].pos.y);
+    cam.x += (targetCam.x - cam.x) * Math.min(1, dt * 6);
+    cam.y += (targetCam.y - cam.y) * Math.min(1, dt * 6);
+  }
+
+  function proj(wx, wy) {
+    const p = toIso(wx, wy);
+    return { x: ANCHOR.x + (p.x - cam.x), y: ANCHOR.y + (p.y - cam.y) };
+  }
+
+  function drawPlatform(p, highlight) {
+    const s = proj(p.pos.x, p.pos.y);
+    if (s.y < -80 || s.y > H + 80 || s.x < -100 || s.x > W + 100) return;
+    const rx = p.r * ISO_X * 1.62, ry = p.r * ISO_Y * 1.62;
+    ctx.save(); ctx.translate(s.x, s.y);
+    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(0, p.h * 0.18, rx * 0.92, ry * 0.92, 0, 0, 7); ctx.fill();
+    if (p.shape === 'cyl') {
+      ctx.fillStyle = p.side;
+      ctx.beginPath(); ctx.moveTo(-rx, 0); ctx.lineTo(-rx, p.h); ctx.ellipse(0, p.h, rx, ry, 0, Math.PI, 0); ctx.lineTo(rx, 0); ctx.closePath(); ctx.fill();
+      const g = ctx.createLinearGradient(0, -ry, 0, ry); g.addColorStop(0, p.top); g.addColorStop(1, p.side);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, 7); ctx.fill();
+    } else {
+      const half = rx;
+      ctx.fillStyle = p.side;
+      ctx.beginPath(); ctx.moveTo(-half, 0); ctx.lineTo(0, ry); ctx.lineTo(0, ry + p.h); ctx.lineTo(-half, p.h); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = shade(p.side, -18);
+      ctx.beginPath(); ctx.moveTo(half, 0); ctx.lineTo(0, ry); ctx.lineTo(0, ry + p.h); ctx.lineTo(half, p.h); ctx.closePath(); ctx.fill();
+      const g = ctx.createLinearGradient(0, -ry, 0, ry); g.addColorStop(0, shade(p.top, 12)); g.addColorStop(1, p.top);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(0, -ry); ctx.lineTo(half, 0); ctx.lineTo(0, ry); ctx.lineTo(-half, 0); ctx.closePath(); ctx.fill();
+    }
+    if (highlight) {
+      ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.ellipse(0, 0, rx * 0.32, ry * 0.32, 0, 0, 7); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function shade(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    let r = (n >> 16) + amt, g = ((n >> 8) & 255) + amt, b = (n & 255) + amt;
+    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function drawPlayer() {
+    const s = proj(player.x, player.y);
+    const topY = s.y - (player.arc || 0);
+    const squat = player.squat || 0;
+    ctx.save(); ctx.translate(s.x, topY);
+    ctx.fillStyle = 'rgba(0,0,0,.3)';
+    const shadowScale = 1 - Math.min((player.arc || 0) / 140, 0.6);
+    ctx.beginPath(); ctx.ellipse(0, (player.arc || 0) + 2, 15 * shadowScale, 7 * shadowScale, 0, 0, 7); ctx.fill();
+    const bodyH = 34 - squat * 12, bodyW = 20 + squat * 6;
+    ctx.fillStyle = '#3b6fe8';
+    RJ.rr(ctx, -bodyW / 2, -bodyH - 6, bodyW, bodyH, 9); ctx.fill();
+    ctx.fillStyle = '#ffd7b0'; ctx.beginPath(); ctx.arc(0, -bodyH - 16, 11, 0, 7); ctx.fill();
+    ctx.fillStyle = '#22252e';
+    ctx.beginPath(); ctx.arc(-3.6, -bodyH - 17, 1.6, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(3.6, -bodyH - 17, 1.6, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  function draw() {
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#2b2f5e'); sky.addColorStop(1, '#171a35');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.5)';
+    for (let i = 0; i < 36; i++) { const x = (i * 53) % W, y = (i * 97) % (H * 0.6); ctx.globalAlpha = 0.15 + (i % 5) * 0.08; ctx.fillRect(x, y, 2, 2); }
+    ctx.globalAlpha = 1;
+    const dx = shakeT > 0 ? (Math.random() - 0.5) * shakeT * 40 : 0;
+    ctx.save(); ctx.translate(dx, 0);
+    for (let i = 0; i < plats.length; i++) drawPlatform(plats[i], i === curIdx + 1 && state === 'ready');
+    if (state !== 'falling') drawPlayer(); else drawFallingPlayer();
+    for (const f of floats) {
+      const s = proj(plats[curIdx].pos.x, plats[curIdx].pos.y);
+      ctx.globalAlpha = 1 - f.t / 0.9; ctx.fillStyle = f.c; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(f.txt, s.x, s.y - 60 - f.t * 40); ctx.globalAlpha = 1;
+    }
+    if (state === 'charging') {
+      const s = proj(player.x, player.y);
+      const pw = Math.min(chargeT / CHARGE_MAX, 1);
+      ctx.save(); ctx.translate(s.x, s.y - 56);
+      ctx.fillStyle = 'rgba(0,0,0,.35)'; RJ.rr(ctx, -30, 0, 60, 9, 4); ctx.fill();
+      const barCol = pw > 0.92 ? '#ff5c5c' : '#5cff9d';
+      ctx.fillStyle = barCol; RJ.rr(ctx, -28, 1.5, 56 * pw, 6, 3); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+    pill('score', `🏆 ${score}`); pill('combo', combo > 1 ? `🔥 连击 x${combo}` : '');
+  }
+  function drawFallingPlayer() {
+    const s = proj(player.x, player.y);
+    ctx.save(); ctx.translate(s.x, s.y - (player.arc || 0)); ctx.rotate(fallT * fallSpin);
+    ctx.fillStyle = '#3b6fe8'; RJ.rr(ctx, -10, -34, 20, 34, 9); ctx.fill();
+    ctx.fillStyle = '#ffd7b0'; ctx.beginPath(); ctx.arc(0, -44, 11, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  plats = [genPlatform(null, 0)]; plats.push(genPlatform(plats[0], 1));
+  curIdx = 0; const p0 = toIso(plats[0].pos.x, plats[0].pos.y); cam = { x: p0.x, y: p0.y };
+  player = { x: 0, y: 0, squat: 0 }; state = 'ready'; score = 0; combo = 1; floats = []; shakeT = 0;
+  RJ.loop(update, draw);
+})();
+</script></body></html>

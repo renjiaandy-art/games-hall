@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>打地鼠</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  const W = 360, H = 560;
+  const GAME_TIME = 45;
+  let cols, rows, pad, top, cell, holes, score, combo, time, running, particles, misses;
+
+  RJ.init({
+    id: 'whack-mole', title: '打地鼠', icon: '🔨',
+    subtitle: '地鼠越冒越快，别打到炸弹',
+    howto: '• <b>点击/敲击</b>冒出的地鼠得分，越晚打出现的地鼠越快<br>• 💣 炸弹不能打，打中会扣分并短暂眩晕<br>• 连续命中会有连击加成<br>• 限时 45 秒，比比谁分数高',
+    onStart: start, onRestart: start,
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['score', 'time', 'combo']);
+
+  function layout() {
+    pad = 22; top = 60;
+    cell = Math.min((W - pad * 2) / cols, (H - top - 30) / rows);
+  }
+  function holeCenter(i) {
+    const c = i % cols, r = (i / cols) | 0;
+    const gridW = cell * cols, gridH = cell * rows;
+    const ox = (W - gridW) / 2, oy = top + (H - top - 30 - gridH) / 2;
+    return { x: ox + c * cell + cell / 2, y: oy + r * cell + cell / 2 };
+  }
+
+  function start() {
+    cols = Math.random() < 0.5 ? 3 : 4; rows = cols;
+    time = GAME_TIME; score = 0; combo = 0; misses = 0; running = true; particles = [];
+    layout();
+    holes = Array.from({ length: cols * rows }, () => ({ state: 'empty', t: 0, isBomb: false }));
+    scheduleNext(0.4);
+    RJ.toast('地鼠出没，快打！', 1100);
+  }
+
+  let spawnTimer = 0, nextSpawnDelay = 0.8;
+  function scheduleNext(delay) { spawnTimer = 0; nextSpawnDelay = delay; }
+
+  function spawnOne() {
+    const idle = holes.map((h, i) => (h.state === 'empty' ? i : -1)).filter((i) => i >= 0);
+    if (!idle.length) return;
+    const hard = Math.max(0, Math.min(1, (GAME_TIME - time) / GAME_TIME));
+    const i = idle[(Math.random() * idle.length) | 0];
+    const h = holes[i];
+    h.isBomb = Math.random() < 0.22 + hard * 0.1;
+    h.state = 'rising'; h.t = 0;
+    h.upTime = Math.max(0.55, 1.35 - hard * 0.85) * (0.75 + Math.random() * 0.5);
+    h.hit = false;
+  }
+
+  function update(dt) {
+    particles.forEach((p) => (p.t += dt)); particles = particles.filter((p) => p.t < 0.6);
+    if (!running) return;
+    time -= dt;
+    spawnTimer += dt;
+    const hard = Math.max(0, Math.min(1, (GAME_TIME - time) / GAME_TIME));
+    if (spawnTimer >= nextSpawnDelay) { spawnOne(); scheduleNext(Math.max(0.28, 0.85 - hard * 0.55) * (0.7 + Math.random() * 0.6)); }
+    for (const h of holes) {
+      if (h.state === 'empty') continue;
+      h.t += dt;
+      if (h.state === 'rising') { if (h.t >= 0.12) { h.state = 'up'; h.t = 0; } }
+      else if (h.state === 'up') { if (h.t >= h.upTime) { h.state = 'hiding'; h.t = 0; if (!h.hit && !h.isBomb) { combo = 0; } } }
+      else if (h.state === 'hiding') { if (h.t >= 0.12) { h.state = 'empty'; } }
+      else if (h.state === 'hit') { if (h.t >= 0.22) { h.state = 'empty'; } }
+    }
+    if (time <= 0) {
+      time = 0; running = false;
+      RJ.over({ title: '时间到！', sub: misses ? `命中地鼠，踩雷 ${misses} 次` : '手速拉满！', score, win: score >= 30 });
+    }
+  }
+
+  function whackAt(pt) {
+    if (!running) return;
+    for (let i = 0; i < holes.length; i++) {
+      const h = holes[i];
+      if (h.state !== 'up' && h.state !== 'rising') continue;
+      const c = holeCenter(i);
+      if (Math.hypot(pt.x - c.x, pt.y - c.y) < cell * 0.42) {
+        if (h.isBomb) {
+          h.state = 'hit'; h.t = 0; h.hit = true; combo = 0; misses++;
+          score = Math.max(0, score - 5);
+          particles.push({ x: c.x, y: c.y, t: 0, txt: '-5', c: '#ff6b6b' });
+          RJ.sfx('boom');
+        } else {
+          h.state = 'hit'; h.t = 0; h.hit = true; combo++;
+          const gain = 1 + Math.floor(combo / 5);
+          score += gain;
+          particles.push({ x: c.x, y: c.y, t: 0, txt: `+${gain}`, c: '#ffe066' });
+          RJ.sfx(combo % 5 === 0 && combo > 0 ? 'coin' : 'hit');
+        }
+        return;
+      }
+    }
+  }
+  view.onPointer((pt) => whackAt(pt));
+
+  function drawHole(i) {
+    const c = holeCenter(i); const h = holes[i]; const r = cell * 0.4;
+    ctx.save(); ctx.translate(c.x, c.y);
+    ctx.fillStyle = '#6b4a2b'; ctx.beginPath(); ctx.ellipse(0, r * 0.18, r, r * 0.62, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#2c1c10'; ctx.beginPath(); ctx.ellipse(0, r * 0.1, r * 0.78, r * 0.46, 0, 0, 7); ctx.fill();
+
+    let pop = 0;
+    if (h.state === 'rising') pop = h.t / 0.12;
+    else if (h.state === 'up') pop = 1;
+    else if (h.state === 'hiding') pop = 1 - h.t / 0.12;
+    else if (h.state === 'hit') pop = Math.max(0, 1 - h.t / 0.22);
+    pop = Math.max(0, Math.min(1, pop));
+
+    if (pop > 0.01 && h.state !== 'empty') {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(-r * 1.3, -r * 1.9, r * 2.6, r * 1.95); ctx.clip();
+      const bodyY = r * 0.1 - pop * r * 1.55;
+      if (h.isBomb) {
+        ctx.fillStyle = h.state === 'hit' ? '#ffb703' : '#2f3440';
+        ctx.beginPath(); ctx.arc(0, bodyY, r * 0.56, 0, 7); ctx.fill();
+        ctx.strokeStyle = '#111'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(r * 0.2, bodyY - r * 0.5); ctx.lineTo(r * 0.4, bodyY - r * 0.85); ctx.stroke();
+        ctx.fillStyle = '#ff9d3d'; ctx.beginPath(); ctx.arc(r * 0.4, bodyY - r * 0.9, 3.5, 0, 7); ctx.fill();
+        if (h.state === 'hit') { ctx.fillStyle = 'rgba(255,120,40,.6)'; ctx.beginPath(); ctx.arc(0, bodyY, r * 0.9 * (1 + (0.22 - Math.max(0,0.22-h.t))*2), 0, 7); ctx.fill(); }
+      } else {
+        const bounce = h.state === 'up' ? Math.sin(h.t * 8) * 2 : 0;
+        ctx.fillStyle = h.state === 'hit' ? '#c98a1c' : '#8a5a34';
+        ctx.beginPath(); ctx.ellipse(0, bodyY + bounce, r * 0.58, r * 0.6, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = '#c98a56'; ctx.beginPath(); ctx.ellipse(0, bodyY + r * 0.1 + bounce, r * 0.32, r * 0.24, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = '#3a2416';
+        ctx.beginPath(); ctx.ellipse(-r * 0.36, bodyY - r * 0.32 + bounce, r * 0.13, r * 0.18, -0.3, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(r * 0.36, bodyY - r * 0.32 + bounce, r * 0.13, r * 0.18, 0.3, 0, 7); ctx.fill();
+        if (h.state !== 'hit') {
+          ctx.fillStyle = '#1c130c';
+          ctx.beginPath(); ctx.arc(-r * 0.16, bodyY - r * 0.06 + bounce, r * 0.06, 0, 7); ctx.fill();
+          ctx.beginPath(); ctx.arc(r * 0.16, bodyY - r * 0.06 + bounce, r * 0.06, 0, 7); ctx.fill();
+          ctx.fillStyle = '#e5b8a0'; ctx.beginPath(); ctx.ellipse(0, bodyY + r * 0.14 + bounce, r * 0.1, r * 0.07, 0, 0, 7); ctx.fill();
+        } else {
+          ctx.strokeStyle = '#1c130c'; ctx.lineWidth = 2; ctx.beginPath();
+          ctx.moveTo(-r * 0.22, bodyY - r * 0.1); ctx.lineTo(-r * 0.06, bodyY + r * 0.04);
+          ctx.moveTo(r * 0.22, bodyY - r * 0.1); ctx.lineTo(r * 0.06, bodyY + r * 0.04); ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function draw() {
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#8fd3ff'); sky.addColorStop(1, '#c7ecc0');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.6)';
+    for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.ellipse(30 + i * 62 % W, 30 + (i * 37) % 40, 20, 10, 0, 0, 7); ctx.fill(); }
+    for (let i = 0; i < cols * rows; i++) drawHole(i);
+    for (const p of particles) {
+      ctx.globalAlpha = 1 - p.t / 0.6; ctx.fillStyle = p.c; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(p.txt, p.x, p.y - p.t * 40); ctx.globalAlpha = 1;
+    }
+    pill('score', `🏆 ${score}`); pill('time', `⏱ ${Math.ceil(Math.max(0, time))}`); pill('combo', combo > 1 ? `🔥x${combo}` : '');
+  }
+
+  cols = 3; rows = 3; time = GAME_TIME; score = 0; combo = 0; running = false; particles = []; misses = 0;
+  layout(); holes = Array.from({ length: cols * rows }, () => ({ state: 'empty', t: 0, isBomb: false }));
+  RJ.loop(update, draw);
+})();
+</script></body></html>

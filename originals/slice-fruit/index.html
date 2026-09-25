@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>切水果</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  const W = 360, H = 600, G = 980;
+  const FRUITS = [
+    { key: 'apple', r: 26, skin: '#ff5252', skin2: '#c22b2b', flesh: '#fff0d6', seedC: '#5a2b12' },
+    { key: 'orange', r: 25, skin: '#ffa733', skin2: '#e07d00', flesh: '#ffcf6b', seedC: '#8a5a12' },
+    { key: 'melon', r: 30, skin: '#4bd671', skin2: '#2a9c4c', flesh: '#ff8fa3', seedC: '#2b1a10' },
+    { key: 'kiwi', r: 22, skin: '#7cae3a', skin2: '#587c22', flesh: '#c8e06a', seedC: '#2b1a10' },
+    { key: 'grape', r: 20, skin: '#9b5de5', skin2: '#6a2fb0', flesh: '#e8d6ff', seedC: '#3a2050' },
+  ];
+  let live, pieces, particles, trail, score, combo, comboT, lives, running, waveTimer, waveDelay, elapsed;
+
+  RJ.init({
+    id: 'slice-fruit', title: '切水果', icon: '🍉',
+    subtitle: '划过水果就能切开，别碰到炸弹',
+    howto: '• 手指划过（或按住鼠标拖动）飞起的水果即可切开得分<br>• 一刀连切多个水果，连击分数更高<br>• 💣 千万别切到炸弹，切到直接结束游戏<br>• 漏接水果会扣一条命，三条命用完游戏结束',
+    onStart: start, onRestart: start,
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['score', 'combo', 'lives']);
+
+  function start() {
+    live = []; pieces = []; particles = []; trail = [];
+    score = 0; combo = 0; comboT = 0; lives = 3; running = true; elapsed = 0;
+    waveTimer = 0; waveDelay = 0.9;
+    RJ.toast('划过水果切开它！', 1200);
+  }
+
+  function spawnWave() {
+    const hard = Math.min(elapsed / 45, 1);
+    const n = 1 + (Math.random() < 0.5 + hard * 0.3 ? 1 : 0) + (Math.random() < hard * 0.4 ? 1 : 0);
+    const bombChance = 0.08 + hard * 0.18;
+    for (let i = 0; i < n; i++) {
+      const isBomb = Math.random() < bombChance;
+      const f = FRUITS[(Math.random() * FRUITS.length) | 0];
+      const x = 50 + Math.random() * (W - 100);
+      const vy = -(650 + Math.random() * 170 + hard * 60);
+      const vx = (Math.random() - 0.5) * 160 + (x < W / 2 ? 40 : -40);
+      live.push({
+        x, y: H + 30, vx, vy, r: isBomb ? 24 : f.r, rot: Math.random() * 6, vrot: (Math.random() - 0.5) * 4,
+        bomb: isBomb, f, sliced: false, missed: false,
+      });
+    }
+  }
+
+  function update(dt) {
+    particles.forEach((p) => { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += G * 0.5 * dt; });
+    particles = particles.filter((p) => p.t < 0.5);
+    pieces.forEach((p) => { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += G * dt; p.rot += p.vrot * dt; });
+    pieces = pieces.filter((p) => p.t < 1.2 && p.y < H + 80);
+    trail = trail.filter((t) => (t.t += dt) < 0.22);
+    if (comboT > 0) { comboT -= dt; if (comboT <= 0) combo = 0; }
+
+    if (!running) return;
+    elapsed += dt;
+    waveTimer += dt;
+    const hard = Math.min(elapsed / 45, 1);
+    if (waveTimer >= waveDelay) { spawnWave(); waveTimer = 0; waveDelay = Math.max(0.5, 1.15 - hard * 0.6) * (0.8 + Math.random() * 0.5); }
+
+    for (const it of live) {
+      it.x += it.vx * dt; it.y += it.vy * dt; it.vy += G * dt; it.rot += it.vrot * dt;
+      if (!it.sliced && !it.missed && it.y - it.r > H) {
+        it.missed = true;
+        if (!it.bomb) {
+          lives--; combo = 0; RJ.sfx('bad');
+          if (lives <= 0) { endGame(); return; }
+        }
+      }
+    }
+    live = live.filter((it) => it.y - it.r < H + 60 && it.y > -400);
+  }
+
+  function endGame() {
+    running = false;
+    RJ.over({ title: '游戏结束', sub: `本局共切开了不少水果`, score, win: score >= 60 });
+  }
+
+  function sliceHit(it) {
+    it.sliced = true;
+    if (it.bomb) {
+      for (let i = 0; i < 18; i++) {
+        const a = Math.random() * Math.PI * 2, sp = 120 + Math.random() * 220;
+        particles.push({ x: it.x, y: it.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t: 0, c: Math.random() < 0.5 ? '#ff8a3d' : '#2f3440', r: 3 + Math.random() * 3 });
+      }
+      RJ.sfx('boom');
+      endGame();
+      return;
+    }
+    combo++; comboT = 0.7;
+    const gain = 1 + Math.floor(combo / 3);
+    score += gain;
+    particles.push({ x: it.x, y: it.y - 10, vx: 0, vy: -20, t: 0, txt: combo > 1 ? `连击x${combo} +${gain}` : `+${gain}`, c: '#ffe066' });
+    const ang = Math.atan2(it.vy, it.vx) + Math.PI / 2;
+    for (let s = -1; s <= 1; s += 2) {
+      pieces.push({
+        x: it.x, y: it.y, vx: it.vx + Math.cos(ang) * s * 90, vy: it.vy - 40 + Math.sin(ang) * s * 40,
+        rot: it.rot, vrot: it.vrot + s * 3, t: 0, side: s, f: it.f, r: it.r,
+      });
+    }
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 140;
+      particles.push({ x: it.x, y: it.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t: 0, c: it.f.flesh, r: 2 + Math.random() * 2.5 });
+    }
+    RJ.sfx(combo % 3 === 0 ? 'coin' : 'pop');
+  }
+
+  function segHitsCircle(x1, y1, x2, y2, cx, cy, r) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((cx - x1) * dx + (cy - y1) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = x1 + dx * t, py = y1 + dy * t;
+    return Math.hypot(cx - px, cy - py) <= r;
+  }
+
+  function checkSlice(p1, p2) {
+    if (!running) return;
+    for (const it of live) {
+      if (it.sliced || it.missed) continue;
+      if (segHitsCircle(p1.x, p1.y, p2.x, p2.y, it.x, it.y, it.r + 6)) sliceHit(it);
+    }
+  }
+
+  let dragging = false, lastPt = null;
+  view.onPointer(
+    (pt) => { dragging = true; lastPt = pt; trail.push({ x: pt.x, y: pt.y, t: 0 }); },
+    (pt) => { if (!dragging) return; if (lastPt) checkSlice(lastPt, pt); trail.push({ x: pt.x, y: pt.y, t: 0 }); lastPt = pt; },
+    () => { dragging = false; lastPt = null; }
+  );
+
+  function drawFruitShape(f, r, sliceOffset) {
+    ctx.save();
+    if (sliceOffset != null) { ctx.beginPath(); ctx.rect(sliceOffset > 0 ? 0 : -r * 1.4, -r * 1.4, r * 1.4, r * 2.8); ctx.clip(); }
+    const g = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.15, 0, 0, r);
+    g.addColorStop(0, f.skin); g.addColorStop(1, f.skin2);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+    if (sliceOffset != null) {
+      ctx.fillStyle = f.flesh; ctx.beginPath();
+      ctx.moveTo(0, -r * 0.92); ctx.lineTo(0, r * 0.92); ctx.arc(0, 0, r * 0.92, Math.PI / 2 * (sliceOffset > 0 ? 1 : -1), Math.PI / 2 * (sliceOffset > 0 ? -1 : 1), sliceOffset > 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = f.seedC;
+      for (let i = 0; i < 4; i++) { const yy = -r * 0.5 + i * r * 0.33; ctx.beginPath(); ctx.ellipse(sliceOffset > 0 ? r * 0.25 : -r * 0.25, yy, r * 0.08, r * 0.14, 0, 0, 7); ctx.fill(); }
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(-r * 0.32, -r * 0.34, r * 0.28, r * 0.16, -0.5, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawBomb(r, exploding) {
+    ctx.fillStyle = exploding ? '#ffb703' : '#2f3440'; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.beginPath(); ctx.ellipse(-r * 0.3, -r * 0.3, r * 0.3, r * 0.16, -0.5, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(r * 0.15, -r * 0.85); ctx.lineTo(r * 0.4, -r * 1.25); ctx.stroke();
+    ctx.fillStyle = '#ff9d3d'; ctx.beginPath(); ctx.arc(r * 0.4, -r * 1.3, 4, 0, 7); ctx.fill();
+  }
+
+  function draw() {
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#1c1440'); sky.addColorStop(1, '#3a1f5c');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.5)';
+    for (let i = 0; i < 26; i++) { const x = (i * 71) % W, y = (i * 113) % (H * 0.7); ctx.globalAlpha = 0.1 + (i % 4) * 0.08; ctx.fillRect(x, y, 2, 2); }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#3a2b1a'; ctx.fillRect(0, H - 26, W, 26);
+    ctx.fillStyle = 'rgba(0,0,0,.15)'; for (let x = 0; x < W; x += 14) ctx.fillRect(x, H - 26, 7, 26);
+
+    if (trail.length > 1) {
+      ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      for (let i = 1; i < trail.length; i++) {
+        const a = trail[i], b = trail[i - 1];
+        const alpha = 1 - a.t / 0.22;
+        ctx.strokeStyle = `rgba(255,255,255,${Math.max(0, alpha)})`;
+        ctx.lineWidth = 8 * Math.max(0, alpha);
+        ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(a.x, a.y); ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    for (const it of live) {
+      if (it.sliced) continue;
+      ctx.save(); ctx.translate(it.x, it.y); ctx.rotate(it.rot);
+      if (it.bomb) drawBomb(it.r); else drawFruitShape(it.f, it.r, null);
+      ctx.restore();
+    }
+    for (const p of pieces) {
+      ctx.save(); ctx.globalAlpha = Math.max(0, 1 - p.t / 1.2); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      drawFruitShape(p.f, p.r, p.side); ctx.restore();
+    }
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, 1 - p.t / 0.5);
+      if (p.txt) { ctx.fillStyle = p.c; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.txt, p.x, p.y - p.t * 50); }
+      else { ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill(); }
+      ctx.globalAlpha = 1;
+    }
+    pill('score', `🏆 ${score}`); pill('combo', combo > 1 ? `🔥x${combo}` : '');
+    pill('lives', '❤️'.repeat(Math.max(0, lives)) + '🖤'.repeat(Math.max(0, 3 - lives)));
+  }
+
+  live = []; pieces = []; particles = []; trail = []; score = 0; combo = 0; comboT = 0; lives = 3; running = false; elapsed = 0;
+  RJ.loop(update, draw);
+})();
+</script></body></html>
