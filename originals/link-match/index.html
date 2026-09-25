@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>连连看</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640;
+  const ROWS = 8, COLS = 6, CELL = 50;
+  const GRID_W = COLS * CELL, GRID_H = ROWS * CELL;
+  const OFFX = (W - GRID_W) / 2, OFFY = 96;
+  const ICONS = ['🍎', '🍋', '🍇', '🍉', '🍓', '🍒', '🥝', '🍑', '🌸', '🍀', '⭐', '💎'];
+  const COPIES = 4; // ROWS*COLS must equal ICONS.length * COPIES
+  const ERO = ROWS + 2, ECO = COLS + 2; // extended grid with a walkable border ring
+
+  RJ.init({
+    id: 'link-match', title: '连连看', icon: '🀄', subtitle: '两次以内拐弯连通同图案即可消除',
+    howto: '• 点击两张图案相同的牌，若能用不超过两次拐弯的直线连通（可借助牌区外的空白通道）即可消除<br>' +
+      '• 点击「提示」高亮一组可消除的牌；点击「重排」会重新打乱剩余的牌（重排后必定有解）<br>' +
+      '• 倒计时结束前清空全部牌即可过关，时间耗尽则游戏失败',
+    onStart: () => startLevel(1, 0), onRestart: () => startLevel(1, 0),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['lv', 'score', 'left']);
+  RJ.hudButton('💡 提示', () => useHint());
+  RJ.hudButton('🔀 重排', () => useShuffle());
+
+  let level, score, timeLeft, timeLimit, running;
+  let cells; // ERO x ECO, 0 = empty/passable, else icon index+1
+  let sel = null; // {r,c}
+  let match = null; // {a,b,path,t}
+  let hint = null; // {a,b,path,t}
+  let bad = null; // {r,c,t}
+
+  function idx(r, c) { return { er: r + 1, ec: c + 1 }; }
+  function typeAt(r, c) { return cells[r + 1][c + 1]; }
+  function setTypeAt(r, c, v) { cells[r + 1][c + 1] = v; }
+  function pixelExt(er, ec) { return { x: OFFX + (ec - 1) * CELL + CELL / 2, y: OFFY + (er - 1) * CELL + CELL / 2 }; }
+
+  function isOpen(er, ec, ia, ib) {
+    if (er <= 0 || er >= ERO - 1 || ec <= 0 || ec >= ECO - 1) return true;
+    if (ia && er === ia.er && ec === ia.ec) return true;
+    if (ib && er === ib.er && ec === ib.ec) return true;
+    return cells[er][ec] === 0;
+  }
+  function clearLine(er1, ec1, er2, ec2, ia, ib) {
+    if (er1 === er2) {
+      const lo = Math.min(ec1, ec2), hi = Math.max(ec1, ec2);
+      for (let c = lo + 1; c < hi; c++) if (!isOpen(er1, c, ia, ib)) return false;
+      return true;
+    }
+    if (ec1 === ec2) {
+      const lo = Math.min(er1, er2), hi = Math.max(er1, er2);
+      for (let r = lo + 1; r < hi; r++) if (!isOpen(r, ec1, ia, ib)) return false;
+      return true;
+    }
+    return false;
+  }
+  function directLine(A, B) {
+    if (A.er === B.er || A.ec === B.ec) { if (clearLine(A.er, A.ec, B.er, B.ec, A, B)) return [A, B]; }
+    return null;
+  }
+  function oneTurn(A, B) {
+    const c1 = { er: A.er, ec: B.ec };
+    if (isOpen(c1.er, c1.ec, A, B) && clearLine(A.er, A.ec, c1.er, c1.ec, A, B) && clearLine(c1.er, c1.ec, B.er, B.ec, A, B)) return [A, c1, B];
+    const c2 = { er: B.er, ec: A.ec };
+    if (isOpen(c2.er, c2.ec, A, B) && clearLine(A.er, A.ec, c2.er, c2.ec, A, B) && clearLine(c2.er, c2.ec, B.er, B.ec, A, B)) return [A, c2, B];
+    return null;
+  }
+  function twoTurn(A, B) {
+    const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    for (const [dr, dc] of dirs) {
+      let er = A.er + dr, ec = A.ec + dc;
+      while (er >= 0 && er < ERO && ec >= 0 && ec < ECO && isOpen(er, ec, A, B)) {
+        const P = { er, ec };
+        if (!(P.er === A.er && P.ec === A.ec)) {
+          const rest = oneTurn(P, B);
+          if (rest) return [A, ...rest];
+        }
+        er += dr; ec += dc;
+      }
+    }
+    return null;
+  }
+  function canLink(A, B) { return directLine(A, B) || oneTurn(A, B) || twoTurn(A, B); }
+
+  function remainingByType() {
+    const map = new Map();
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const t = typeAt(r, c); if (!t) continue;
+      const ex = idx(r, c);
+      if (!map.has(t)) map.set(t, []);
+      map.get(t).push(ex);
+    }
+    return map;
+  }
+  function findSolvable() {
+    const map = remainingByType();
+    for (const list of map.values()) {
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+        const path = canLink(list[i], list[j]);
+        if (path) return { a: list[i], b: list[j], path };
+      }
+    }
+    return null;
+  }
+
+  function newBoard() {
+    const bag = [];
+    for (let t = 1; t <= ICONS.length; t++) for (let k = 0; k < COPIES; k++) bag.push(t);
+    for (let attempt = 0; attempt < 400; attempt++) {
+      RJ.shuffle(bag);
+      cells = Array.from({ length: ERO }, () => new Array(ECO).fill(0));
+      let p = 0;
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) setTypeAt(r, c, bag[p++]);
+      if (findSolvable()) return;
+    }
+  }
+
+  function reshuffleRemaining() {
+    const bag = [];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) { const t = typeAt(r, c); if (t) bag.push(t); }
+    if (bag.length === 0) return;
+    for (let attempt = 0; attempt < 400; attempt++) {
+      RJ.shuffle(bag);
+      let p = 0;
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (typeAt(r, c)) setTypeAt(r, c, bag[p++]);
+      if (findSolvable()) return;
+    }
+  }
+
+  function timeLimitFor(lv) { return Math.max(60, 130 - (lv - 1) * 10); }
+
+  function startLevel(lv, sc) {
+    level = lv; score = sc; running = true;
+    timeLimit = timeLimitFor(lv); timeLeft = timeLimit;
+    sel = null; match = null; hint = null; bad = null;
+    newBoard();
+    RJ.toast(`第 ${lv} 关`, 1100);
+  }
+
+  function tilesLeft() {
+    let n = 0;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (typeAt(r, c)) n++;
+    return n;
+  }
+
+  function tryMatch(A, B) {
+    const path = canLink(A, B);
+    if (!path) { bad = { list: [A, B], t: 0.3 }; RJ.sfx('bad'); return; }
+    match = { a: A, b: B, path, t: 0.22 };
+    setTypeAt(A.er - 1, A.ec - 1, 0);
+    setTypeAt(B.er - 1, B.ec - 1, 0);
+    score += 10 + Math.round(30 * (timeLeft / timeLimit));
+    RJ.sfx('pop');
+  }
+
+  function afterRemovalCheck() {
+    if (tilesLeft() === 0) {
+      running = false;
+      RJ.over({ title: '过关！', sub: `第 ${level} 关清空`, score, win: true, next: () => startLevel(level + 1, score) });
+      return;
+    }
+    if (!findSolvable()) { reshuffleRemaining(); RJ.toast('无解，自动重排', 1200); }
+  }
+
+  function useHint() {
+    if (!running || hint) return;
+    const s = findSolvable();
+    if (!s) return;
+    hint = { a: s.a, b: s.b, path: s.path, t: 1.4 };
+  }
+  function useShuffle() {
+    if (!running) return;
+    reshuffleRemaining();
+    RJ.toast('已重排', 900);
+    sel = null;
+  }
+
+  function cellFromPoint(p) {
+    const c = Math.floor((p.x - OFFX) / CELL), r = Math.floor((p.y - OFFY) / CELL);
+    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return null;
+    return { r, c };
+  }
+
+  view.onPointer(null, null, (p) => {
+    if (!running || match) return;
+    const cell = cellFromPoint(p);
+    if (!cell) return;
+    const t = typeAt(cell.r, cell.c);
+    if (!t) return;
+    const ex = idx(cell.r, cell.c);
+    if (!sel) { sel = ex; return; }
+    if (sel.er === ex.er && sel.ec === ex.ec) { sel = null; return; }
+    const selType = cells[sel.er][sel.ec];
+    if (selType !== t) { sel = ex; return; }
+    const A = sel; sel = null;
+    tryMatch(A, ex);
+  });
+
+  function update(dt) {
+    if (match) {
+      match.t -= dt;
+      if (match.t <= 0) { match = null; afterRemovalCheck(); }
+    }
+    if (hint) { hint.t -= dt; if (hint.t <= 0) hint = null; }
+    if (bad) { bad.t -= dt; if (bad.t <= 0) bad = null; }
+    if (!running) return;
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+      timeLeft = 0; running = false;
+      RJ.over({ title: '时间到', sub: `第 ${level} 关`, score });
+    }
+  }
+
+  function drawTile(r, c, type, opt) {
+    opt = opt || {};
+    const x = OFFX + c * CELL, y = OFFY + r * CELL;
+    const pad = 3;
+    ctx.fillStyle = opt.sel ? '#3aa0ff' : (opt.bad ? '#e0524a' : (opt.hint ? '#f0ad4e' : '#232847'));
+    RJ.rr(ctx, x + pad, y + pad, CELL - pad * 2, CELL - pad * 2, 9); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.font = (CELL * 0.52) + 'px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(ICONS[type - 1], x + CELL / 2, y + CELL / 2 + 1);
+  }
+
+  function drawPath(path, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    path.forEach((p, i) => { const px = pixelExt(p.er, p.ec); if (i === 0) ctx.moveTo(px.x, px.y); else ctx.lineTo(px.x, px.y); });
+    ctx.stroke();
+    for (const p of path) { const px = pixelExt(p.er, p.ec); ctx.fillStyle = color; ctx.beginPath(); ctx.arc(px.x, px.y, 3.5, 0, 7); ctx.fill(); }
+  }
+
+  function draw() {
+    ctx.fillStyle = '#181c33'; ctx.fillRect(0, 0, W, H);
+    // timer bar
+    const frac = timeLimit ? Math.max(0, timeLeft / timeLimit) : 0;
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; RJ.rr(ctx, OFFX, 58, GRID_W, 10, 5); ctx.fill();
+    ctx.fillStyle = frac < 0.25 ? '#e0524a' : (frac < 0.5 ? '#f0ad4e' : '#5cc75c');
+    RJ.rr(ctx, OFFX, 58, GRID_W * frac, 10, 5); ctx.fill();
+
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const t = typeAt(r, c); if (!t) continue;
+      const ex = idx(r, c);
+      const isSel = sel && sel.er === ex.er && sel.ec === ex.ec;
+      const isBad = bad && bad.list.some((p) => p.er === ex.er && p.ec === ex.ec);
+      const isHint = hint && ((hint.a.er === ex.er && hint.a.ec === ex.ec) || (hint.b.er === ex.er && hint.b.ec === ex.ec));
+      drawTile(r, c, t, { sel: isSel, bad: isBad, hint: isHint });
+    }
+    if (match) drawPath(match.path, 'rgba(255,255,255,.9)');
+    if (hint) drawPath(hint.path, 'rgba(240,173,74,.85)');
+
+    ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(`剩余 ${tilesLeft() / 2} 对`, W / 2, OFFY + GRID_H + 26);
+
+    pill('lv', `第${level || 1}关`); pill('score', `分数 ${score || 0}`); pill('left', `⏱ ${Math.ceil(timeLeft || 0)}s`);
+  }
+
+  RJ.loop(update, draw);
+
+  level = 1; score = 0; running = false; timeLimit = timeLimitFor(1); timeLeft = timeLimit;
+  newBoard();
+})();
+</script></body></html>
