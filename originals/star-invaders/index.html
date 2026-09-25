@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>星际防线</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640;
+  RJ.init({
+    id: 'star-invaders', title: '星际防线', icon: '👾', subtitle: '整队外星虫群逐渐逼近，守住防线',
+    howto: '• 拖动/鼠标移动战舰，方向键 ←→ 也可移动，自动持续开火<br>• 虫群整体左右平移，触边就会下压一层，越打越快<br>• 掩体可以挡子弹，但会被打烂，敌弹也会削掉它<br>• 顶部偶尔飞过奖励飞船，击落得高分<br>• 虫群冲到防线或战舰生命耗尽即失败',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['wave', 'lives', 'score']);
+
+  // ---- original pixel-bitmap alien sprites (7 wide x 5 tall, two animation frames) ----
+  const SPRITES = {
+    a: { color: '#4fe0ff', score: 30,
+      f0: ['0001000', '0011100', '0111110', '1101011', '1010101'],
+      f1: ['0001000', '0011100', '0111110', '1101011', '0101010'] },
+    b: { color: '#c6e04f', score: 20,
+      f0: ['0100010', '0011100', '0111110', '1111111', '0100010'],
+      f1: ['0100010', '0011100', '0111110', '1111111', '1000001'] },
+    c: { color: '#ff5ec4', score: 10,
+      f0: ['0011100', '0111110', '1111111', '1011101', '0100010'],
+      f1: ['0011100', '0111110', '1111111', '1011101', '1000001'] },
+  };
+  const PIX = 3.2; // pixel size for bitmap sprites
+
+  function drawBitmap(rows, cx, cy, color) {
+    const w = rows[0].length, h = rows.length;
+    const ox = cx - (w * PIX) / 2, oy = cy - (h * PIX) / 2;
+    ctx.fillStyle = color;
+    for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) {
+      if (rows[r][c] === '1') ctx.fillRect(ox + c * PIX, oy + r * PIX, PIX + 0.4, PIX + 0.4);
+    }
+  }
+
+  const COLS = 7, ROWS_MAX = 6, COLW = 40, ROWH = 28, GRID_X0 = 40, GRID_Y0 = 66;
+  const TYPE_BY_ROW = (r) => (r === 0 ? 'a' : r <= 2 ? 'b' : 'c');
+
+  let player, bullets, ebombs, particles, shields, bonus;
+  let enemies, dirX, gridOffX, gridOffY, moveTimer, bombTimer, frameParity, rows;
+  let running, wave, score, lives, bonusTimer;
+
+  function buildShields() {
+    const list = [];
+    const cols = 6, srows = 4, brick = 8, w = cols * brick;
+    const n = 3, gap = (W - n * w) / (n + 1);
+    for (let s = 0; s < n; s++) {
+      const x0 = gap + s * (w + gap), y0 = 470;
+      const bricks = [];
+      for (let r = 0; r < srows; r++) for (let c = 0; c < cols; c++) {
+        if (r === 0 && (c === 0 || c === cols - 1)) continue; // notch corners
+        bricks.push({ x: x0 + c * brick, y: y0 + r * brick, w: brick, h: brick, alive: true });
+      }
+      list.push(bricks);
+    }
+    return list;
+  }
+
+  function shieldHit(x, y) {
+    for (const bricks of shields) {
+      for (const b of bricks) {
+        if (!b.alive) continue;
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) { b.alive = false; return true; }
+      }
+    }
+    return false;
+  }
+
+  function spawnWave() {
+    rows = Math.min(ROWS_MAX, 4 + Math.floor((wave - 1) / 2));
+    enemies = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < COLS; c++) {
+      enemies.push({ r, c, bx: GRID_X0 + c * COLW, by: GRID_Y0 + r * ROWH, alive: true, type: TYPE_BY_ROW(r) });
+    }
+    dirX = 1; gridOffX = 0; gridOffY = 0; moveTimer = 0; bombTimer = RJ.rand(0.6, 1.2); frameParity = 0;
+  }
+
+  function startGame() {
+    player = { x: W / 2, y: H - 70, w: 24, fireCd: 0, invul: 1.2, dragging: false, dragOffX: 0 };
+    bullets = []; ebombs = []; particles = []; shields = buildShields(); bonus = null; bonusTimer = RJ.rand(9, 15);
+    running = true; wave = 1; score = 0; lives = 3;
+    spawnWave();
+  }
+
+  view.onPointer(
+    (p) => { player.dragging = true; player.dragOffX = p.x - player.x; },
+    (p) => { if (player.dragging) player.x = p.x - player.dragOffX; },
+    () => { player.dragging = false; },
+  );
+
+  function aliveEnemies() { return enemies.filter((e) => e.alive); }
+
+  function moveInterval() {
+    const total = enemies.length, left = aliveEnemies().length;
+    const ratio = total ? left / total : 0;
+    const base = Math.max(0.16, 0.85 - (wave - 1) * 0.05);
+    return Math.max(0.07, base * (0.25 + ratio * 0.75));
+  }
+
+  function stepGrid() {
+    frameParity ^= 1;
+    const alive = aliveEnemies();
+    if (!alive.length) return;
+    const minX = Math.min(...alive.map((e) => e.bx)) + gridOffX;
+    const maxX = Math.max(...alive.map((e) => e.bx)) + gridOffX;
+    const step = 7;
+    if ((dirX > 0 && maxX + step > W - 24) || (dirX < 0 && minX - step < 24)) {
+      gridOffY += 16; dirX *= -1;
+    } else {
+      gridOffX += dirX * step;
+    }
+    const maxY = Math.max(...alive.map((e) => e.by)) + gridOffY;
+    if (maxY > player.y - 34) endGame(false, `虫群突破防线，坚持到第 ${wave} 波`);
+  }
+
+  function dropBomb() {
+    const cols = {};
+    for (const e of aliveEnemies()) { if (!cols[e.c] || e.by > cols[e.c].by) cols[e.c] = e; }
+    const list = Object.values(cols);
+    if (!list.length) return;
+    const e = list[RJ.randi(0, list.length - 1)];
+    ebombs.push({ x: e.bx + gridOffX, y: e.by + gridOffY + 10, vy: 130 + wave * 6 });
+  }
+
+  function explode(x, y, big) { particles.push({ x, y, t: 0, big }); RJ.sfx('boom'); }
+
+  function killEnemy(e) {
+    e.alive = false;
+    score += Math.round(SPRITES[e.type].score * (1 + (wave - 1) * 0.1));
+    explode(e.bx + gridOffX, e.by + gridOffY, false);
+    RJ.sfx('hit');
+    if (!aliveEnemies().length) { wave++; RJ.toast(`第 ${wave} 波来袭`, 1400); spawnWave(); }
+  }
+
+  function endGame(win, subMsg) {
+    if (!running) return;
+    running = false;
+    RJ.over({ title: win ? '守住防线' : '防线失守', sub: subMsg || '', score, win });
+  }
+
+  function hitPlayer() {
+    if (player.invul > 0) return;
+    lives--; explode(player.x, player.y, true);
+    if (lives <= 0) { endGame(false, `坚持到第 ${wave} 波`); return; }
+    player.invul = 1.5; player.x = W / 2;
+  }
+
+  function spawnBonusMaybe(dt) {
+    bonusTimer -= dt;
+    if (!bonus && bonusTimer <= 0) {
+      const fromLeft = Math.random() < 0.5;
+      bonus = { x: fromLeft ? -20 : W + 20, y: 36, vx: (fromLeft ? 1 : -1) * 90, score: RJ.randi(4, 12) * 10 };
+      bonusTimer = RJ.rand(11, 18);
+    }
+    if (bonus) {
+      bonus.x += bonus.vx * dt;
+      if (bonus.x < -30 || bonus.x > W + 30) bonus = null;
+    }
+  }
+
+  function update(dt) {
+    particles = particles.filter((p) => (p.t += dt) < 0.5);
+    if (!running) return;
+    player.x = Math.max(player.w, Math.min(W - player.w, player.x));
+    player.invul = Math.max(0, player.invul - dt);
+    player.fireCd -= dt;
+    if (player.fireCd <= 0) { bullets.push({ x: player.x, y: player.y - 18, vy: -420 }); RJ.sfx('shoot'); player.fireCd = Math.max(0.22, 0.42 - wave * 0.015); }
+
+    moveTimer -= dt;
+    if (moveTimer <= 0) { stepGrid(); moveTimer = moveInterval(); }
+    if (!running) return;
+    bombTimer -= dt;
+    if (bombTimer <= 0) { dropBomb(); bombTimer = Math.max(0.45, 1.3 - wave * 0.06); }
+
+    spawnBonusMaybe(dt);
+
+    for (const b of bullets) b.y += b.vy * dt;
+    bullets = bullets.filter((b) => {
+      if (b.y < -10) return false;
+      if (shieldHit(b.x, b.y)) { RJ.sfx('pop'); return false; }
+      if (bonus && Math.abs(b.x - bonus.x) < 16 && Math.abs(b.y - bonus.y) < 12) {
+        score += bonus.score; explode(bonus.x, bonus.y, false); RJ.sfx('coin'); bonus = null; return false;
+      }
+      for (const e of aliveEnemies()) {
+        const ex = e.bx + gridOffX, ey = e.by + gridOffY;
+        if (Math.abs(b.x - ex) < 13 && Math.abs(b.y - ey) < 10) { killEnemy(e); return false; }
+      }
+      return true;
+    });
+
+    for (const bm of ebombs) bm.y += bm.vy * dt;
+    ebombs = ebombs.filter((bm) => {
+      if (bm.y > H + 10) return false;
+      if (shieldHit(bm.x, bm.y)) { RJ.sfx('pop'); return false; }
+      if (Math.abs(bm.x - player.x) < player.w * 0.6 + 4 && Math.abs(bm.y - player.y) < 16) { hitPlayer(); return false; }
+      return true;
+    });
+  }
+
+  function drawShields() {
+    for (const bricks of shields) for (const b of bricks) if (b.alive) { ctx.fillStyle = '#3ddc84'; ctx.fillRect(b.x, b.y, b.w - 1, b.h - 1); }
+  }
+  function drawPlayer() {
+    if (player.invul > 0 && Math.floor(player.invul * 10) % 2 === 0) return;
+    ctx.save(); ctx.translate(player.x, player.y);
+    ctx.fillStyle = '#4fd1ff';
+    ctx.beginPath(); ctx.moveTo(0, -18); ctx.lineTo(18, 14); ctx.lineTo(-18, 14); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#0a1330'; ctx.fillRect(-5, -2, 10, 8);
+    ctx.restore();
+  }
+  function draw() {
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0a0f24'); g.addColorStop(1, '#141a3a');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    for (const e of enemies) if (e.alive) {
+      const sp = SPRITES[e.type], frame = frameParity ? sp.f1 : sp.f0;
+      drawBitmap(frame, e.bx + gridOffX, e.by + gridOffY, sp.color);
+    }
+    if (bonus) { ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🛸', bonus.x, bonus.y); }
+    drawShields();
+    ctx.fillStyle = '#fff'; for (const b of bullets) ctx.fillRect(b.x - 1.5, b.y - 6, 3, 10);
+    ctx.fillStyle = '#ff5a5a'; for (const bm of ebombs) ctx.fillRect(bm.x - 2, bm.y - 5, 4, 10);
+    drawPlayer();
+    for (const p of particles) {
+      const k = p.t / 0.5, r = (p.big ? 34 : 18) * k;
+      ctx.globalAlpha = 1 - k; ctx.fillStyle = k < 0.5 ? '#ffd94a' : '#ff5a3c';
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    }
+    pill('wave', `第${wave || 1}波`); pill('lives', '❤'.repeat(Math.max(0, lives || 0)) || '💀'); pill('score', `分数 ${score || 0}`);
+  }
+
+  const KMAP = { ArrowLeft: -1, ArrowRight: 1, a: -1, d: 1 };
+  RJ.loop((dt) => {
+    if (running && player && !player.dragging) {
+      for (const k in KMAP) if (RJ.keys[k]) player.x += KMAP[k] * 240 * dt;
+    }
+    update(dt);
+  }, draw);
+
+  player = { x: W / 2, y: H - 70, w: 24, fireCd: 0, invul: 0, dragging: false, dragOffX: 0 };
+  bullets = []; ebombs = []; particles = []; shields = buildShields(); bonus = null;
+  enemies = []; running = false; wave = 1; score = 0; lives = 3;
+})();
+</script></body></html>
