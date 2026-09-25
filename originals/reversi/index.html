@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#15182f">
+<link rel="icon" href="data:,">
+<title>黑白棋</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif;
+  color:#fff;background:#15182f;
+  background:radial-gradient(120% 80% at 50% 0%,#2b3170 0%,#1a1d3d 55%,#101226 100%);
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation;
+}
+#app{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;overflow:hidden;touch-action:none;
+  padding:calc(env(safe-area-inset-top) + 10px) 12px calc(env(safe-area-inset-bottom) + 10px)}
+.glass{background:rgba(255,255,255,.12);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);
+  border:1px solid rgba(255,255,255,.16);border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.topbar{width:100%;max-width:560px;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.topbar a,.btn-s{color:#fff;text-decoration:none;font-size:14px;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.14);border:none;cursor:pointer;font-family:inherit}
+.topbar h1{font-size:18px;font-weight:700;letter-spacing:2px}
+.hud{width:100%;max-width:560px;display:flex;gap:10px;margin-bottom:8px}
+.side{flex:1;display:flex;align-items:center;gap:10px;padding:10px 12px;transition:all .25s;border:2px solid transparent}
+.side.active{border-color:rgba(255,214,90,.9);box-shadow:0 0 0 3px rgba(255,214,90,.18),0 10px 30px rgba(0,0,0,.25)}
+.side .mini{width:30px;height:30px;border-radius:50%;flex:none}
+.side .lbl{font-size:12px;opacity:.75}
+.side .num{font-size:24px;font-weight:800;line-height:1}
+.status{height:24px;font-size:15px;margin-bottom:8px;text-align:center;opacity:.95}
+.status .dots::after{content:'';animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+.boardwrap{flex:1;min-height:0;width:100%;display:flex;align-items:center;justify-content:center}
+#board{--s:min(calc(100vw - 24px),calc(100vh - 250px),560px);--s:min(calc(100vw - 24px),calc(100dvh - 250px),560px);
+  width:var(--s);height:var(--s);min-width:240px;min-height:240px;padding:calc(var(--s) * .022);border-radius:16px;
+  background:linear-gradient(145deg,#6b4a2b,#3d2814);box-shadow:0 14px 40px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.2)}
+.grid{width:100%;height:100%;display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);gap:2px;
+  background:#0d3b24;border-radius:8px;overflow:hidden;padding:2px}
+.cell{position:relative;background:radial-gradient(circle at 50% 40%,#23945a,#177343);cursor:default;touch-action:none}
+.cell.legal{cursor:pointer}
+.cell.hint::after{content:'';position:absolute;left:50%;top:50%;width:26%;height:26%;transform:translate(-50%,-50%);border-radius:50%;
+  background:rgba(255,255,255,.28);box-shadow:0 0 0 2px rgba(255,255,255,.35);animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{transform:translate(-50%,-50%) scale(1.25);opacity:.6}}
+.cell.last::before{content:'';position:absolute;inset:0;box-shadow:inset 0 0 0 2px rgba(255,214,90,.85);z-index:2;pointer-events:none}
+.star{position:absolute;width:7px;height:7px;border-radius:50%;background:#0d3b24;transform:translate(-50%,-50%);z-index:1}
+.disc{position:absolute;inset:9%;border-radius:50%;transition:transform .32s ease;transform-style:preserve-3d}
+.disc.b,.mini.b{background:radial-gradient(circle at 35% 30%,#6a6f7a 0%,#23262d 35%,#050608 75%);box-shadow:0 3px 5px rgba(0,0,0,.55),inset 0 -2px 3px rgba(255,255,255,.08)}
+.disc.w,.mini.w{background:radial-gradient(circle at 35% 30%,#ffffff 0%,#eef0f3 40%,#b9bec7 90%);box-shadow:0 3px 5px rgba(0,0,0,.45),inset 0 -2px 3px rgba(0,0,0,.15)}
+.disc.flip{animation:flip .36s ease}
+.disc.drop{animation:drop .22s ease-out}
+@keyframes flip{0%{transform:rotateY(0)}50%{transform:rotateY(90deg) scale(1.08)}100%{transform:rotateY(0)}}
+@keyframes drop{0%{transform:scale(1.35);opacity:.2}100%{transform:scale(1);opacity:1}}
+.controls{width:100%;max-width:560px;display:flex;gap:10px;margin-top:10px}
+.controls button{flex:1}
+button.btn{font-family:inherit;font-size:16px;font-weight:600;color:#fff;border:none;border-radius:14px;padding:12px 10px;cursor:pointer;
+  background:rgba(255,255,255,.16);transition:transform .1s,background .2s}
+button.btn:active{transform:scale(.96)}
+button.btn.on{background:linear-gradient(180deg,#ffd65a,#f0a818);color:#3a2600}
+button.primary{background:linear-gradient(180deg,#3aa0ff,#0a6cff);box-shadow:0 8px 20px rgba(10,108,255,.4)}
+.overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(8,10,25,.55);z-index:20;overflow:auto;touch-action:pan-y}
+.overlay.hidden{display:none}
+.card{width:100%;max-width:400px;padding:24px 22px;border-radius:26px;background:rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(24px) saturate(170%);backdrop-filter:blur(24px) saturate(170%);border:1px solid rgba(255,255,255,.2);text-align:center}
+.card h2{font-size:28px;letter-spacing:4px;margin-bottom:6px}
+.card .sub{opacity:.75;font-size:14px;margin-bottom:14px}
+.rules{text-align:left;font-size:14px;line-height:1.7;background:rgba(0,0,0,.18);border-radius:14px;padding:12px 14px;margin-bottom:16px}
+.seg{display:flex;background:rgba(0,0,0,.22);border-radius:14px;padding:4px;margin-bottom:12px}
+.seg button{flex:1;font-family:inherit;font-size:16px;font-weight:600;padding:10px;border:none;border-radius:11px;background:none;color:rgba(255,255,255,.7);cursor:pointer}
+.seg button.sel{background:rgba(255,255,255,.9);color:#1a1d3d}
+.record{font-size:13px;opacity:.75;margin-bottom:16px;min-height:18px}
+.card .col{display:flex;flex-direction:column;gap:10px}
+.card a.btn{display:block;text-decoration:none;font-size:16px;font-weight:600;color:#fff;border-radius:14px;padding:12px;background:rgba(255,255,255,.16)}
+.final{display:flex;justify-content:center;gap:26px;margin:14px 0 8px}
+.final div{display:flex;align-items:center;gap:8px;font-size:30px;font-weight:800}
+.final .mini{width:34px;height:34px;border-radius:50%}
+.toast{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%) scale(.9);padding:12px 20px;border-radius:14px;background:rgba(0,0,0,.72);
+  font-size:16px;opacity:0;pointer-events:none;transition:all .25s;z-index:30;white-space:nowrap}
+.toast.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+@media (min-width:700px){.side .num{font-size:28px}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <a href="../">‹ 大厅</a>
+    <h1>黑白棋</h1>
+    <button class="btn-s" id="menuBtn">菜单</button>
+  </div>
+  <div class="hud">
+    <div class="side glass" id="sideB"><div class="mini b"></div><div><div class="lbl">你 · 黑</div><div class="num" id="numB">2</div></div></div>
+    <div class="side glass" id="sideW"><div class="mini w"></div><div><div class="lbl" id="lblW">电脑 · 白</div><div class="num" id="numW">2</div></div></div>
+  </div>
+  <div class="status" id="status">&nbsp;</div>
+  <div class="boardwrap"><div id="board"><div class="grid" id="grid"></div></div></div>
+  <div class="controls">
+    <button class="btn" id="hintBtn">💡 提示</button>
+    <button class="btn" id="restartBtn">↻ 重新开始</button>
+  </div>
+</div>
+
+<div class="overlay" id="startOv">
+  <div class="card">
+    <h2>⚫ 黑白棋 ⚪</h2>
+    <div class="sub">夹住对手，翻转局势</div>
+    <div class="rules">
+      • 你执<b>黑</b>先行，电脑执<b>白</b><br>
+      • 落子须在横、竖、斜任一方向<b>夹住</b>至少一颗对方棋子，被夹住的棋子全部翻成你的颜色<br>
+      • 无子可下时自动跳过，双方都不能下时对局结束<br>
+      • 结束时棋子多的一方获胜；<b>四个角</b>永远不会被翻转，是兵家必争之地
+    </div>
+    <div class="seg" id="diffSeg">
+      <button data-d="easy">简单</button>
+      <button data-d="hard">困难</button>
+    </div>
+    <div class="record" id="record"></div>
+    <div class="col">
+      <button class="btn primary" id="startBtn">开始游戏</button>
+      <a class="btn" href="../">返回大厅</a>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="endOv">
+  <div class="card">
+    <h2 id="endTitle">对局结束</h2>
+    <div class="final">
+      <div><span class="mini b"></span><span id="endB">0</span></div>
+      <div><span class="mini w"></span><span id="endW">0</span></div>
+    </div>
+    <div class="sub" id="endSub"></div>
+    <div class="record" id="endRecord"></div>
+    <div class="col">
+      <button class="btn primary" id="againBtn">再来一局</button>
+      <button class="btn" id="toMenuBtn">更换难度</button>
+      <a class="btn" href="../">返回大厅</a>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="logic.js"></script>
+<script>
+(function () {
+  var R = window.Reversi, B = R.BLACK, W = R.WHITE;
+  var HUMAN = B, AI = W, STORE = 'rj-reversi-record-v1', HARD_BUDGET = 900;
+  var $ = function (id) { return document.getElementById(id); };
+  var grid = $('grid'), cells = [], discs = [];
+  var board, turn, difficulty = 'easy', hintOn = false, busy = false, over = true, lastMove = -1, gen = 0;
+
+  function load() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } }
+  function save(v) { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch (e) {} }
+  (function () { var r = load(); if (r.lastDiff === 'hard' || r.lastDiff === 'easy') difficulty = r.lastDiff; })();
+
+  function recText(d) {
+    var r = load()[d];
+    if (!r) return '尚无战绩';
+    var t = (d === 'hard' ? '困难' : '简单') + '战绩：' + r.w + ' 胜 ' + r.l + ' 负 ' + r.d + ' 平';
+    if (r.best > 0) t += ' · 最大胜差 ' + r.best + ' 子';
+    return t;
+  }
+
+  for (var i = 0; i < 64; i++) {
+    var c = document.createElement('div');
+    c.className = 'cell'; c.dataset.i = i;
+    grid.appendChild(c); cells.push(c); discs.push(null);
+  }
+  [[2, 2], [6, 2], [2, 6], [6, 6]].forEach(function (p) {
+    var s = document.createElement('div'); s.className = 'star';
+    s.style.left = (p[0] / 8 * 100) + '%'; s.style.top = (p[1] / 8 * 100) + '%';
+    s.style.marginLeft = '1px'; s.style.marginTop = '1px';
+    grid.appendChild(s);
+  });
+  grid.style.position = 'relative';
+
+  var worker = null, workerOk = false, pending = null, reqId = 0;
+  try {
+    if (location.protocol !== 'file:' && window.Worker) {
+      worker = new Worker('ai-worker.js');
+      workerOk = true;
+      worker.onmessage = function (e) {
+        if (pending && e.data.id === pending.id) { var p = pending; pending = null; p.cb(e.data.move); }
+      };
+      worker.onerror = function (e) {
+        e.preventDefault && e.preventDefault();
+        workerOk = false;
+        if (pending) { var p = pending; pending = null; setTimeout(function () { p.cb(R.chooseMove(p.board, p.color, p.difficulty, HARD_BUDGET)); }, 0); }
+      };
+    }
+  } catch (e) { workerOk = false; }
+
+  function aiMove(b, color, diff, cb) {
+    if (diff === 'hard' && workerOk) {
+      pending = { id: ++reqId, board: b, color: color, difficulty: diff, cb: cb };
+      worker.postMessage({ id: reqId, board: b, color: color, difficulty: diff, budget: HARD_BUDGET });
+    } else {
+      setTimeout(function () { cb(R.chooseMove(b, color, diff, HARD_BUDGET)); }, 40);
+    }
+  }
+
+  var toastT;
+  function toast(msg, ms) {
+    var t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove('show'); }, ms || 1300);
+  }
+  function setStatus(html) { $('status').innerHTML = html; }
+
+  function render(flipped, placed) {
+    var legal = (!over && turn === HUMAN && !busy) ? R.legalMoves(board, HUMAN) : [];
+    var legalSet = {};
+    legal.forEach(function (m) { legalSet[m[1] * 8 + m[0]] = 1; });
+    var flipSet = {};
+    (flipped || []).forEach(function (m) { flipSet[m[1] * 8 + m[0]] = 1; });
+    for (var i = 0; i < 64; i++) {
+      var v = board[i], cell = cells[i];
+      cell.className = 'cell' + (legalSet[i] ? ' legal' : '') + (legalSet[i] && hintOn ? ' hint' : '') + (i === lastMove ? ' last' : '');
+      if (v === R.EMPTY) { if (discs[i]) { discs[i].remove(); discs[i] = null; } continue; }
+      var cls = v === B ? 'b' : 'w';
+      if (!discs[i]) { discs[i] = document.createElement('div'); cell.appendChild(discs[i]); }
+      var anim = i === placed ? ' drop' : flipSet[i] ? ' flip' : '';
+      discs[i].className = 'disc ' + cls + anim;
+    }
+    var s = R.score(board);
+    $('numB').textContent = s.black; $('numW').textContent = s.white;
+    $('sideB').classList.toggle('active', !over && turn === B);
+    $('sideW').classList.toggle('active', !over && turn === W);
+  }
+
+  function startGame() {
+    gen++; pending = null;
+    board = R.initBoard(); turn = B; busy = false; over = false; lastMove = -1;
+    $('lblW').textContent = '电脑 · 白（' + (difficulty === 'hard' ? '困难' : '简单') + '）';
+    $('startOv').classList.add('hidden'); $('endOv').classList.add('hidden');
+    render();
+    nextTurn();
+  }
+
+  function play(color, x, y) {
+    var r = R.applyMove(board, color, x, y);
+    if (!r) return false;
+    board = r.board; lastMove = y * 8 + x;
+    render(r.flipped, lastMove);
+    turn = R.opp(color);
+    return true;
+  }
+
+  function nextTurn() {
+    var g = gen;
+    if (R.isGameOver(board)) { finish(); return; }
+    if (!R.hasAnyMove(board, turn)) {
+      busy = true;
+      var who = turn === HUMAN ? '你' : '电脑';
+      toast(who + '无子可下，自动跳过', 1400);
+      setStatus(who + '无子可下，自动跳过');
+      setTimeout(function () { if (g !== gen) return; busy = false; turn = R.opp(turn); render(); nextTurn(); }, 1300);
+      render();
+      return;
+    }
+    if (turn === HUMAN) {
+      busy = false;
+      setStatus('轮到你落子' + (hintOn ? '（提示已开启）' : ''));
+      render();
+    } else {
+      busy = true;
+      setStatus('电脑思考中<span class="dots"></span>');
+      render();
+      var t0 = Date.now(), minDelay = difficulty === 'easy' ? 550 : 350;
+      setTimeout(function () {
+        if (g !== gen) return;
+        aiMove(board.slice(), AI, difficulty, function (mv) {
+          if (g !== gen) return;
+          var wait = Math.max(0, minDelay - (Date.now() - t0));
+          setTimeout(function () {
+            if (g !== gen) return;
+            busy = false;
+            if (mv) play(AI, mv[0], mv[1]); else turn = HUMAN;
+            nextTurn();
+          }, wait);
+        });
+      }, 60);
+    }
+  }
+
+  function finish() {
+    over = true; busy = false; render();
+    var s = R.score(board), res = s.black > s.white ? 'w' : s.black < s.white ? 'l' : 'd';
+    var rec = load(), r = rec[difficulty] || { w: 0, l: 0, d: 0, best: 0 };
+    r[res]++;
+    if (res === 'w') r.best = Math.max(r.best || 0, s.black - s.white);
+    rec[difficulty] = r; save(rec);
+    $('endTitle').textContent = res === 'w' ? '🎉 你赢了！' : res === 'l' ? '电脑获胜' : '平局';
+    $('endB').textContent = s.black; $('endW').textContent = s.white;
+    $('endSub').textContent = res === 'd' ? '双方棋子数相同' : (res === 'w' ? '领先 ' : '落后 ') + Math.abs(s.black - s.white) + ' 子';
+    $('endRecord').textContent = recText(difficulty);
+    setStatus(res === 'w' ? '你赢了！' : res === 'l' ? '电脑获胜' : '平局');
+    setTimeout(function () { $('endOv').classList.remove('hidden'); }, 700);
+  }
+
+  function onTap(e) {
+    var cell = e.target.closest('.cell');
+    if (!cell || over || busy || turn !== HUMAN) return;
+    e.preventDefault();
+    var i = +cell.dataset.i;
+    if (play(HUMAN, i & 7, i >> 3)) nextTurn();
+    else toast('这里不能落子', 900);
+  }
+  grid.addEventListener('pointerdown', onTap);
+
+  function syncDiff() {
+    Array.prototype.forEach.call($('diffSeg').children, function (b) { b.classList.toggle('sel', b.dataset.d === difficulty); });
+    $('record').textContent = recText(difficulty);
+  }
+  $('diffSeg').addEventListener('click', function (e) {
+    var d = e.target.dataset && e.target.dataset.d; if (!d) return;
+    difficulty = d; syncDiff();
+    var rec = load(); rec.lastDiff = d; save(rec);
+  });
+  $('hintBtn').addEventListener('click', function () {
+    hintOn = !hintOn; this.classList.toggle('on', hintOn);
+    if (!over && turn === HUMAN && !busy) setStatus('轮到你落子' + (hintOn ? '（提示已开启）' : ''));
+    render();
+  });
+  $('startBtn').addEventListener('click', startGame);
+  $('againBtn').addEventListener('click', startGame);
+  $('restartBtn').addEventListener('click', startGame);
+  function showMenu() { gen++; pending = null; busy = false; syncDiff(); $('endOv').classList.add('hidden'); $('startOv').classList.remove('hidden'); }
+  $('toMenuBtn').addEventListener('click', showMenu);
+  $('menuBtn').addEventListener('click', showMenu);
+  document.addEventListener('touchmove', function (e) { if (!e.target.closest('.overlay')) e.preventDefault(); }, { passive: false });
+  document.addEventListener('dblclick', function (e) { e.preventDefault(); });
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+
+  board = R.initBoard(); syncDiff(); render();
+})();
+</script>
+</body>
+</html>
