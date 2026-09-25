@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a1024">
+<title>斗地主</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <a class="pill" href="../">← 大厅</a>
+    <span class="pill" id="hudBase">底分 <b>-</b></span>
+    <span class="pill" id="hudMult">倍数 <b>×1</b></span>
+    <span class="spacer"></span>
+    <span class="pill" id="hudTotal">积分 <b>0</b></span>
+  </div>
+  <div class="table" id="table">
+    <div class="bottom-cards" id="bottom"></div>
+    <div class="seat left" id="seat2">
+      <div class="name">电脑·左</div>
+      <div class="badge" id="role2">农民</div>
+      <div class="stack"><div class="back"></div><div class="back"></div><div class="back"></div></div>
+      <div class="count" id="count2">17</div>
+    </div>
+    <div class="seat right" id="seat1">
+      <div class="name">电脑·右</div>
+      <div class="badge" id="role1">农民</div>
+      <div class="stack"><div class="back"></div><div class="back"></div><div class="back"></div></div>
+      <div class="count" id="count1">17</div>
+    </div>
+    <div class="slot s1" id="slot1"></div>
+    <div class="slot s2" id="slot2"></div>
+    <div class="center-info" id="info"></div>
+    <div class="slot s0" id="slot0"></div>
+  </div>
+  <div class="actions" id="actions"></div>
+  <div class="hand-wrap" id="hand"></div>
+</div>
+
+<div class="overlay" id="startOv">
+  <div class="panel">
+    <div class="big-emoji">🃏</div>
+    <h1>斗地主</h1>
+    <div class="sub">你 vs 两位电脑 · 一人当地主，两人当农民</div>
+    <div class="rules">
+      <b>叫分：</b>轮流叫 1/2/3 分或不叫，叫分最高者当地主，拿走 3 张底牌先出牌；叫的分就是底分。<br>
+      <b>出牌：</b>跟牌必须同牌型、同张数且更大；两家都不要时，由最后出牌者重新自由出牌。<br>
+      <b>牌型：</b>单张、对子、三张、三带一、三带对、顺子(≥5)、连对(≥3对)、飞机(可带单或带对)、四带二、炸弹、王炸。顺子/连对/飞机不能含 2 和王。<br>
+      <b>胜负：</b>先出完牌的一方获胜，两位农民算一队。炸弹、王炸、春天、反春天各使分数 ×2。<br>
+      <b>操作：</b>点击或横扫手牌选牌，再点「出牌」；「提示」帮你选牌，「不出」过牌。
+    </div>
+    <div class="rec" id="startRec"></div>
+    <div class="btns"><button class="btn primary" id="startBtn">开始游戏</button></div>
+    <a class="link" href="../">返回大厅</a>
+    <div><button class="small-btn" id="resetBtn">清零战绩</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="endOv" hidden>
+  <div class="panel">
+    <div class="big-emoji" id="endEmoji">🎉</div>
+    <h2 id="endTitle">你赢了</h2>
+    <div class="sub" id="endSub"></div>
+    <div class="breakdown" id="endBreak"></div>
+    <table class="result-table" id="endTable"></table>
+    <div class="rec" id="endRec"></div>
+    <div class="btns">
+      <button class="btn primary" id="againBtn">再来一局</button>
+      <button class="btn" id="viewBtn">看牌面</button>
+    </div>
+    <a class="link" href="../">返回大厅</a>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="logic.js"></script>
+<script src="ai.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
