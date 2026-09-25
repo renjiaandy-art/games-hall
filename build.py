@@ -144,7 +144,24 @@ def patch_xqwlight_index(dest, game):
     return ["index.htm copied to index.html (Pages only serves index.html as directory index)"]
 
 
+def patch_dino_touch(dest, game):
+    js = dest / "index.js"
+    s = js.read_text(encoding="utf-8")
+    old = "var IS_MOBILE = /Android/.test(window.navigator.userAgent) || IS_IOS;"
+    assert old in s, "dino IS_MOBILE not found"
+    # iPadOS reports navigator.platform "MacIntel": treat any touch device as mobile
+    js.write_text(s.replace(old, "var IS_MOBILE = /Android/.test(window.navigator.userAgent) || IS_IOS || ('ontouchstart' in window);"), encoding="utf-8")
+    idx = dest / "index.html"
+    h = idx.read_text(encoding="utf-8")
+    h2 = h.replace("Press Space to start", "点击屏幕或按空格开始", 1).replace(
+        "</body>", "<script>document.addEventListener('touchstart',function(){var b=document.getElementById('messageBox');if(b)b.style.visibility='hidden';},{passive:true});</script></body>", 1)
+    assert h2 != h, "dino message not found"
+    idx.write_text(h2, encoding="utf-8")
+    return ["index.js: any touch device counts as mobile (iPadOS fix)", "index.html: Chinese start hint, tap also dismisses it"]
+
+
 PATCHES = {
+    "dino_touch": patch_dino_touch,
     "minesweeper": patch_minesweeper,
     "xqwlight_index": patch_xqwlight_index,
     "hextris_ga": patch_hextris_ga,

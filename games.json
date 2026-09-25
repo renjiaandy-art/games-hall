@@ -85,7 +85,8 @@
   "ref": "gh-pages",
   "dir": ".",
   "license": "BSD-3-Clause",
-  "upstream": "wayou/t-rex-runner"
+  "upstream": "wayou/t-rex-runner",
+  "patch": "dino_touch"
  },
  {
   "slug": "flappy",
