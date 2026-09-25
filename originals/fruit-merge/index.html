@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>合成大水果</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 600;
+  const LEFT = 60, RIGHT = W - 60, FLOOR = H - 14, LINE_Y = 435, SPAWN_Y = 62;
+  const LEVELS = [
+    { r: 14, c: '#ff5a5f', name: '樱桃' }, { r: 18, c: '#ff8c42', name: '葡萄' },
+    { r: 23, c: '#ffc93c', name: '橘子' }, { r: 28, c: '#a0e04c', name: '柠檬' },
+    { r: 35, c: '#5bc86b', name: '苹果' }, { r: 42, c: '#2ea88a', name: '梨子' },
+    { r: 50, c: '#3aa0ff', name: '桃子' }, { r: 59, c: '#7b6cff', name: '菠萝' },
+    { r: 69, c: '#e35bd8', name: '西瓜' }, { r: 80, c: '#ffd400', name: '金瓜' },
+  ];
+  const G = 1500, SUB_DT = 1 / 120, MAX_DANGER = 1.0;
+
+  let balls, nextId, dropReady, aimX, danger, score, over, curLevel, nextLevel;
+  const RNG_MAX = 4; // only small fruits spawn to drop
+
+  RJ.init({
+    id: 'fruit-merge', title: '合成大水果', icon: '🍉', subtitle: '点哪落哪，同款水果碰一起就合成更大的',
+    howto: '• 点击屏幕上方任意位置，水果就落在那一列<br>• 两个大小相同的水果碰到一起会合成下一级更大的水果<br>• 堆到顶部红线并停留 1 秒就结束<br>• 合成等级越高分越多，合成出最高级水果会消失并给大奖',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['score']);
+
+  function randLevel() { return RJ.randi(0, RNG_MAX); }
+
+  function startGame() {
+    balls = []; nextId = 1; danger = 0; score = 0; over = false;
+    dropReady = true; aimX = W / 2; curLevel = randLevel(); nextLevel = randLevel();
+  }
+
+  function spawn(level, x, y) {
+    const L = LEVELS[level];
+    balls.push({ id: nextId++, level, x, y, px: x, py: y, r: L.r, born: 0 });
+  }
+
+  function tryDrop(x) {
+    if (!dropReady || over) return;
+    const L = LEVELS[curLevel];
+    x = Math.max(LEFT + L.r, Math.min(RIGHT - L.r, x));
+    spawn(curLevel, x, SPAWN_Y);
+    RJ.sfx('move');
+    curLevel = nextLevel; nextLevel = randLevel();
+    dropReady = false;
+    setTimeout(() => { dropReady = true; }, 260);
+  }
+
+  view.onPointer(
+    (p) => { aimX = p.x; tryDrop(p.x); },
+    (p) => { aimX = p.x; }
+  );
+  addEventListener('keydown', (e) => { if (e.key === ' ') tryDrop(aimX); });
+
+  // Verlet integration: positions only, velocity is implicit (x - px). This is
+  // unconditionally stable for dense stacking, unlike impulse-based solvers which
+  // can inject energy and eject balls when many are overlapping at once.
+  const CONSTRAINT_ITERS = 3, MAX_V = 1400, MAX_CORR = 5;
+  function physicsStep(dt) {
+    const maxStep = MAX_V * dt;
+    for (const b of balls) {
+      b.born += dt;
+      let vx = (b.x - b.px) * 0.995, vy = (b.y - b.py) * 0.995;
+      const sp = Math.hypot(vx, vy);
+      if (sp > maxStep) { const k = maxStep / sp; vx *= k; vy *= k; }
+      b.px = b.x; b.py = b.y;
+      b.x += vx; b.y += vy + G * dt * dt;
+    }
+    for (let iter = 0; iter < CONSTRAINT_ITERS; iter++) {
+      for (const b of balls) {
+        if (b.x - b.r < LEFT) { const vx = b.x - b.px; b.x = LEFT + b.r; b.px = b.x + vx * 0.3; }
+        if (b.x + b.r > RIGHT) { const vx = b.x - b.px; b.x = RIGHT - b.r; b.px = b.x + vx * 0.3; }
+        if (b.y + b.r > FLOOR) { const vy = b.y - b.py; b.y = FLOOR - b.r; b.py = b.y + vy * 0.15; }
+      }
+      for (let i = 0; i < balls.length; i++) {
+        for (let j = i + 1; j < balls.length; j++) {
+          const a = balls[i], b = balls[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy) || 0.001;
+          const minDist = a.r + b.r;
+          if (dist < minDist) {
+            const nx = dx / dist, ny = dy / dist;
+            const overlap = Math.min(minDist - dist, MAX_CORR);
+            const ma = a.r * a.r, mb = b.r * b.r, tot = ma + mb;
+            const axc = -nx * overlap * (mb / tot), ayc = -ny * overlap * (mb / tot);
+            const bxc = nx * overlap * (ma / tot), byc = ny * overlap * (ma / tot);
+            // shift px/py together with x/y so a pure position correction doesn't
+            // get misread as velocity next step (that feedback loop is what was
+            // launching balls off-screen under dense stacks).
+            a.x += axc; a.px += axc; a.y += ayc; a.py += ayc;
+            b.x += bxc; b.px += bxc; b.y += byc; b.py += byc;
+          }
+        }
+      }
+    }
+  }
+
+  function mergePass() {
+    const consumed = new Set();
+    for (let i = 0; i < balls.length; i++) {
+      const a = balls[i]; if (consumed.has(a.id)) continue;
+      for (let j = i + 1; j < balls.length; j++) {
+        const b = balls[j]; if (consumed.has(b.id)) continue;
+        if (a.level !== b.level) continue;
+        const dist = Math.hypot(b.x - a.x, b.y - a.y);
+        if (dist < (a.r + b.r) * 1.02) {
+          consumed.add(a.id); consumed.add(b.id);
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          if (a.level >= LEVELS.length - 1) {
+            score += 200; RJ.toast('MAX! +200', 1200); RJ.sfx('win');
+          } else {
+            score += (a.level + 1) * (a.level + 2) * 3;
+            spawn(a.level + 1, mx, my);
+            RJ.sfx(a.level >= 4 ? 'coin' : 'pop');
+          }
+          break;
+        }
+      }
+    }
+    if (consumed.size) balls = balls.filter((b) => !consumed.has(b.id));
+  }
+
+  function update(dt) {
+    if (over) return;
+    const steps = Math.max(1, Math.round(dt / SUB_DT));
+    const sdt = dt / steps;
+    for (let s = 0; s < steps; s++) physicsStep(sdt);
+    mergePass();
+    let danger_now = false;
+    for (const b of balls) {
+      const speed = Math.hypot(b.x - b.px, b.y - b.py) / sdt;
+      if (b.born > 0.6 && b.y - b.r < LINE_Y && speed < 40) danger_now = true;
+    }
+    danger = danger_now ? danger + dt : 0;
+    if (danger > MAX_DANGER) {
+      over = true;
+      RJ.over({ title: '游戏结束', sub: '水果堆过线啦', score });
+    }
+  }
+
+  function drawFruit(x, y, r, level, wobble) {
+    const L = LEVELS[level];
+    ctx.save(); ctx.translate(x, y);
+    const g = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.15, 0, 0, r);
+    g.addColorStop(0, '#ffffff'); g.addColorStop(0.25, L.c); g.addColorStop(1, shade(L.c, -30));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.ellipse(-r * 0.3, -r * 0.35, r * 0.28, r * 0.16, -0.5, 0, Math.PI * 2); ctx.fill();
+    if (!wobble) {
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath(); ctx.arc(-r * 0.28, r * 0.05, Math.max(1.4, r * 0.07), 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(r * 0.28, r * 0.05, Math.max(1.4, r * 0.07), 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, r * 0.32, r * 0.18, 0.15, Math.PI - 0.15); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function shade(hex, pct) {
+    const n = parseInt(hex.slice(1), 16);
+    let r = (n >> 16) + pct, g = ((n >> 8) & 0xff) + pct, b = (n & 0xff) + pct;
+    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function draw() {
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#fef3e0'); sky.addColorStop(1, '#fde0d0');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = danger > 0 ? '#ff3b3b' : 'rgba(255,90,90,.5)';
+    ctx.lineWidth = danger > 0 ? 3 : 2; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(LEFT, LINE_Y); ctx.lineTo(RIGHT, LINE_Y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(150,100,60,.6)'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(LEFT, LINE_Y - 20); ctx.lineTo(LEFT, FLOOR); ctx.lineTo(RIGHT, FLOOR); ctx.lineTo(RIGHT, LINE_Y - 20); ctx.stroke();
+    for (const b of balls) drawFruit(b.x, b.y, b.r, b.level);
+    if (dropReady && !over) {
+      const L = LEVELS[curLevel];
+      const x = Math.max(LEFT + L.r, Math.min(RIGHT - L.r, aimX));
+      ctx.globalAlpha = 0.55; ctx.setLineDash([4, 4]); ctx.strokeStyle = '#888';
+      ctx.beginPath(); ctx.moveTo(x, SPAWN_Y + L.r); ctx.lineTo(x, FLOOR); ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = 1; drawFruit(x, SPAWN_Y, L.r, curLevel, true);
+    }
+    const nl = LEVELS[nextLevel];
+    ctx.fillStyle = 'rgba(255,255,255,.6)'; RJ.rr(ctx, W - 60, 6, 52, 52, 12); ctx.fill();
+    ctx.fillStyle = '#754'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('下一个', W - 34, 18);
+    ctx.save(); ctx.translate(W - 34, 36); const s = Math.min(1, 16 / nl.r);
+    ctx.scale(s, s); drawFruit(0, 0, nl.r, nextLevel, true); ctx.restore();
+    pill('score', `分数 ${score}`);
+  }
+
+  startGame();
+  RJ.loop(update, draw);
+})();
+</script></body></html>

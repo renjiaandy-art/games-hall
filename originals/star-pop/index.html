@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>消灭星星</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const COLS = 10, ROWS = 10, CELL = 34, W = COLS * CELL, H = ROWS * CELL;
+  const PALETTE = ['#ff5a5f', '#ffb400', '#3ddc84', '#3aa0ff', '#8a63ff', '#ff6fae', '#00c2c2'];
+
+  let cols, score, level, target, colorCount, over, pop = [];
+  RJ.init({
+    id: 'star-pop', title: '消灭星星', icon: '⭐', subtitle: '点相连的同色方块消除，连得越多分越高',
+    howto: '• 点击 2 个及以上相连的同色方块即可消除，得分 = 方块数² × 5<br>• 消除后上方方块下落，空列会向左靠拢<br>• 点不出可消组合时结算，剩余方块越少奖励越高<br>• 全部清空会有清屏大奖并进入下一关',
+    onStart: () => newGame(), onRestart: () => newGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['lv', 'goal', 'score']);
+
+  function makeBoard() {
+    let c;
+    do {
+      c = [];
+      for (let x = 0; x < COLS; x++) { const col = []; for (let y = 0; y < ROWS; y++) col.push(RJ.randi(0, colorCount - 1)); c.push(col); }
+    } while (!hasAnyMove(c));
+    return c;
+  }
+  function newGame() {
+    level = 1; score = 0; target = 800; colorCount = 5; over = false; pop = [];
+    cols = makeBoard();
+  }
+  function newLevelBoard() { colorCount = Math.min(7, 5 + Math.floor((level - 1) / 2)); cols = makeBoard(); }
+
+  function hasAnyMove(c) {
+    for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
+      const v = c[x][y]; if (v < 0) continue;
+      if (x + 1 < COLS && c[x + 1][y] === v) return true;
+      if (y + 1 < ROWS && c[x][y + 1] === v) return true;
+    }
+    return false;
+  }
+  function floodFill(sx, sy) {
+    const color = cols[sx][sy]; if (color < 0) return [];
+    const seen = new Set(), stack = [[sx, sy]], group = [];
+    while (stack.length) {
+      const [x, y] = stack.pop(); const key = x + ',' + y;
+      if (seen.has(key) || x < 0 || x >= COLS || y < 0 || y >= ROWS) continue;
+      if (cols[x][y] !== color) continue;
+      seen.add(key); group.push([x, y]);
+      stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+    }
+    return group;
+  }
+  function applyGravity() {
+    for (let x = 0; x < COLS; x++) {
+      const vals = cols[x].filter((v) => v >= 0);
+      cols[x] = new Array(ROWS - vals.length).fill(-1).concat(vals);
+    }
+  }
+  function compactColumns() {
+    const nonEmpty = cols.filter((c) => c.some((v) => v >= 0));
+    const emptyN = COLS - nonEmpty.length;
+    cols = nonEmpty.concat(Array.from({ length: emptyN }, () => new Array(ROWS).fill(-1)));
+  }
+  function countCells() { let n = 0; for (const c of cols) for (const v of c) if (v >= 0) n++; return n; }
+
+  function tap(x, y) {
+    if (over) return;
+    const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
+    if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) return;
+    const group = floodFill(cx, cy);
+    if (group.length < 2) { RJ.sfx('bad'); return; }
+    const gained = group.length * group.length * 5;
+    score += gained;
+    for (const [gx, gy] of group) pop.push({ x: gx * CELL + CELL / 2, y: gy * CELL + CELL / 2, color: cols[gx][gy], t: 0 });
+    for (const [gx, gy] of group) cols[gx][gy] = -1;
+    RJ.sfx(group.length >= 8 ? 'coin' : group.length >= 4 ? 'hit' : 'pop');
+    RJ.toast('+' + gained, 700);
+    applyGravity(); compactColumns();
+
+    const remaining = countCells();
+    if (remaining === 0) {
+      score += 500; RJ.toast('清屏大奖 +500！', 1500); RJ.sfx('win');
+      level++; newLevelBoard(); target = 800 + (level - 1) * 600;
+      return;
+    }
+    if (score >= target) { level++; target = 800 + (level - 1) * 600; newLevelBoard(); RJ.toast('第 ' + level + ' 关', 1200); return; }
+    if (!hasAnyMove(cols)) {
+      const bonus = Math.max(0, (30 - remaining)) * 15;
+      score += bonus; over = true;
+      RJ.over({ title: '无路可消', sub: `剩余 ${remaining} 块，奖励 +${bonus}`, score });
+    }
+  }
+  view.onPointer((p) => tap(p.x, p.y));
+
+  function draw() {
+    ctx.fillStyle = '#0f1230'; ctx.fillRect(0, 0, W, H);
+    for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
+      const v = cols[x][y]; if (v < 0) continue;
+      const px = x * CELL, py = y * CELL, pad = 2.5;
+      const g = ctx.createLinearGradient(px, py, px, py + CELL);
+      g.addColorStop(0, PALETTE[v]); g.addColorStop(1, shade(PALETTE[v], -35));
+      ctx.fillStyle = g; RJ.rr(ctx, px + pad, py + pad, CELL - pad * 2, CELL - pad * 2, 7); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.35)'; RJ.rr(ctx, px + pad + 3, py + pad + 3, CELL - pad * 2 - 6, 6, 3); ctx.fill();
+    }
+    pop = pop.filter((f) => (f.t += 1 / 60) < 0.35);
+    for (const f of pop) {
+      const k = f.t / 0.35;
+      ctx.globalAlpha = 1 - k; ctx.fillStyle = PALETTE[f.color];
+      ctx.beginPath(); ctx.arc(f.x, f.y, CELL * 0.3 * (1 + k), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    pill('lv', `第${level}关`); pill('goal', `目标 ${target}`); pill('score', `分数 ${score}`);
+  }
+  function shade(hex, pct) {
+    const n = parseInt(hex.slice(1), 16);
+    let r = (n >> 16) + pct, g = ((n >> 8) & 0xff) + pct, b = (n & 0xff) + pct;
+    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  level = 1; score = 0; target = 800; colorCount = 5; over = true; cols = makeBoard();
+  RJ.loop(() => {}, draw);
+})();
+</script></body></html>

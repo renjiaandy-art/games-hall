@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>别踩白块</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 600, COLS = 4, COLW = W / COLS, TILE_H = 140;
+  const MODES = [
+    { key: 'classic', title: '经典模式', emoji: '🎵', desc: '连续点满 50 块，看你用时多短' },
+    { key: 'arcade', title: '街机模式', emoji: '🔥', desc: '速度越来越快，坚持得越久分越高' },
+    { key: 'zen', title: '禅模式', emoji: '🧘', desc: '限时 30 秒，尽量多点几块' },
+  ];
+  // 小星星（公有领域儿歌）旋律音高序列，循环播放
+  const N = { C: 261.63, D: 293.66, E: 329.63, F: 349.23, G: 392.0, A: 440.0 };
+  const MELODY = [
+    N.C, N.C, N.G, N.G, N.A, N.A, N.G, N.F, N.F, N.E, N.E, N.D, N.D, N.C,
+    N.G, N.G, N.F, N.F, N.E, N.E, N.D, N.G, N.G, N.F, N.F, N.E, N.E, N.D,
+    N.C, N.C, N.G, N.G, N.A, N.A, N.G, N.F, N.F, N.E, N.E, N.D, N.D, N.C,
+  ];
+
+  let ac = null;
+  function unlockAudio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch (e) {} }
+  function playNote(i) {
+    if (!ac) return;
+    const freq = MELODY[i % MELODY.length];
+    const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.001, t); g.gain.linearRampToValueAtTime(0.2, t + 0.008); g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+    o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.34);
+  }
+
+  let state, tiles, hitCount, mode, speed, spawnTimer, lastCol, elapsed, zenLeft, cardRects;
+
+  RJ.init({
+    id: 'piano-tiles', title: '别踩白块', icon: '🎹', subtitle: '按顺序点黑块，别碰到白块',
+    howto: '• 四列黑块从上往下落，按顺序点黑块<br>• 点到空白处或漏掉一块黑块就结束<br>• 经典：点满 50 块计时；街机：越来越快；禅：限时 30 秒<br>• 每次点击都会弹出一段旋律的音符',
+    onStart: () => { unlockAudio(); showSelect(); }, onRestart: () => { unlockAudio(); showSelect(); },
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['mode', 'count', 'time']);
+
+  function showSelect() {
+    state = 'select';
+    cardRects = MODES.map((m, i) => ({ ...m, x: 20, y: 150 + i * 140, w: W - 40, h: 118 }));
+  }
+  function startGame(key) {
+    mode = key; tiles = []; hitCount = 0; spawnTimer = 0; lastCol = -1; elapsed = 0; zenLeft = 30;
+    speed = mode === 'arcade' ? 260 : mode === 'zen' ? 280 : 300;
+    state = 'playing';
+  }
+  function spawnTile() {
+    let col = RJ.randi(0, COLS - 1);
+    if (col === lastCol && Math.random() < 0.7) col = RJ.randi(0, COLS - 1);
+    lastCol = col;
+    tiles.push({ col, y: -TILE_H, hit: false, hitT: 0 });
+  }
+  function finish(result) {
+    state = 'over';
+    RJ.over(result);
+  }
+  function failNow(reason) {
+    if (state !== 'playing') return;
+    let score = hitCount, sub = reason;
+    if (mode === 'classic') sub = `${reason} · 已点 ${hitCount}/50 块`;
+    RJ.sfx('bad');
+    finish({ title: '游戏结束', sub, score });
+  }
+  function handleHit(tile) {
+    tile.hit = true; tile.hitT = 0;
+    hitCount++;
+    playNote(hitCount - 1);
+    if (mode === 'arcade') speed = Math.min(760, 260 + hitCount * 9);
+    if (mode === 'classic' && hitCount >= 50) {
+      finish({ title: '完成！', sub: `50 块用时 ${elapsed.toFixed(2)} 秒`, score: Math.round(20000 / elapsed), win: true });
+    }
+  }
+  function finishZen() {
+    finish({ title: '时间到', sub: `禅模式 30 秒内点中 ${hitCount} 块`, score: hitCount, win: true });
+  }
+
+  function tap(p) {
+    if (state === 'select') {
+      for (const c of cardRects) if (p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h) { RJ.sfx('move'); startGame(c.key); return; }
+      return;
+    }
+    if (state !== 'playing') return;
+    const col = Math.max(0, Math.min(COLS - 1, Math.floor(p.x / COLW)));
+    let target = null;
+    for (const t of tiles) if (t.col === col && !t.hit && t.y < H && t.y + TILE_H > -40) { if (!target || t.y < target.y) target = t; }
+    if (target) handleHit(target);
+    else failNow('踩到白块了');
+  }
+  view.onPointer(tap);
+
+  function update(dt) {
+    if (state !== 'playing') return;
+    elapsed += dt;
+    if (mode === 'zen') { zenLeft -= dt; if (zenLeft <= 0) { zenLeft = 0; finishZen(); return; } }
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) { spawnTile(); spawnTimer = TILE_H / speed; }
+    for (const t of tiles) {
+      if (!t.hit) t.y += speed * dt;
+      else t.hitT += dt;
+    }
+    for (const t of tiles) {
+      if (!t.hit && t.y > H) { failNow('漏掉了黑块'); return; }
+    }
+    tiles = tiles.filter((t) => t.y < H + 20 && (!t.hit || t.hitT < 0.3));
+  }
+
+  function drawSelect() {
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#1b1e3a'); sky.addColorStop(1, '#2b2f5a');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 24px sans-serif'; ctx.fillText('选择模式', W / 2, 100);
+    for (const c of cardRects) {
+      ctx.fillStyle = 'rgba(255,255,255,.12)'; RJ.rr(ctx, c.x, c.y, c.w, c.h, 16); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.5; RJ.rr(ctx, c.x, c.y, c.w, c.h, 16); ctx.stroke();
+      ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+      ctx.font = '30px sans-serif'; ctx.fillText(c.emoji, c.x + 18, c.y + 48);
+      ctx.font = 'bold 19px sans-serif'; ctx.fillText(c.title, c.x + 62, c.y + 42);
+      ctx.font = '13.5px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillText(c.desc, c.x + 62, c.y + 68);
+    }
+    pill('mode', ''); pill('count', ''); pill('time', '');
+  }
+  function drawPlaying() {
+    ctx.fillStyle = '#fafafa'; ctx.fillRect(0, 0, W, H);
+    for (let c = 1; c < COLS; c++) { ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(c * COLW, 0); ctx.lineTo(c * COLW, H); ctx.stroke(); }
+    for (const t of tiles) {
+      const y = t.y, x = t.col * COLW;
+      ctx.save();
+      if (t.hit) { const k = t.hitT / 0.3; ctx.globalAlpha = Math.max(0, 1 - k); }
+      ctx.fillStyle = t.hit ? '#5b6' : '#1a1c2b';
+      ctx.fillRect(x + 2, y + 2, COLW - 4, TILE_H - 4);
+      ctx.restore();
+    }
+    const modeName = mode === 'classic' ? '经典' : mode === 'arcade' ? '街机' : '禅';
+    pill('mode', modeName);
+    pill('count', mode === 'classic' ? `${hitCount}/50` : `已点 ${hitCount}`);
+    pill('time', mode === 'zen' ? `⏱ ${Math.ceil(zenLeft)}` : mode === 'classic' ? `${elapsed.toFixed(1)}s` : `速度 ${Math.round(speed)}`);
+  }
+  function draw() { if (state === 'select') drawSelect(); else drawPlaying(); }
+
+  showSelect();
+  RJ.loop(update, draw);
+})();
+</script></body></html>
