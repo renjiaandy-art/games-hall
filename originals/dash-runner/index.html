@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>极速跑酷</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640, GY = 500, PX = 96;
+  const GRAV = 1900, JUMP_V = 600, JUMP2_V = 620;
+  const STAND_H = 54, SLIDE_H = 26, PW = 30;
+  RJ.init({
+    id: 'dash-runner', title: '极速跑酷', icon: '🏃', subtitle: '一路狂奔，跳跃滑铲躲开障碍，收集金币冲高分！',
+    howto: '• 点击屏幕 / 上滑 / 空格·↑：跳跃（可二段跳，越过高大的障碍）<br>• 下滑屏幕 / ↓：滑铲，钻过低空拦网<br>• 沿途收集金币加分，跑得越远速度越快，分数按距离与金币结算<br>• 撞上障碍物游戏结束',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['dist', 'coin']);
+
+  let running, player, obstacles, coins, particles, totalPx, speed, spawnT, coinT, hill1, hill2, prevJump, prevSlide, meters, coinN, shakeT;
+
+  function startGame() {
+    running = true;
+    player = { y: 0, vy: 0, jumps: 0, sliding: false, slideT: 0, phase: 0, deadT: 0 };
+    obstacles = []; coins = []; particles = [];
+    totalPx = 0; speed = 230; spawnT = 1.0; coinT = 1.6;
+    hill1 = 0; hill2 = 0; prevJump = false; prevSlide = false; meters = 0; coinN = 0; shakeT = 0;
+  }
+
+  function doJump() {
+    if (!running || player.deadT > 0 || player.sliding) return;
+    if (player.jumps === 0) { player.vy = JUMP_V; player.jumps = 1; RJ.sfx('hit'); }
+    else if (player.jumps === 1) { player.vy = JUMP2_V; player.jumps = 2; RJ.sfx('pop'); }
+  }
+  function doSlide() {
+    if (!running || player.deadT > 0 || player.y > 4 || player.sliding) return;
+    player.sliding = true; player.slideT = 0.45; RJ.sfx('move');
+  }
+
+  let downY = 0, downT = 0, moved = false;
+  view.onPointer(
+    (p) => { downY = p.y; downT = performance.now(); moved = false; },
+    (p) => {
+      if (moved) return;
+      if (p.y - downY > 34) { moved = true; doSlide(); }
+      else if (downY - p.y > 28) { moved = true; doJump(); }
+    },
+    () => { if (!moved) doJump(); },
+  );
+
+  function spawnObstacle() {
+    const r = Math.random();
+    let kind;
+    if (r < 0.36) kind = 'rock'; else if (r < 0.62) kind = 'spike'; else if (r < 0.84) kind = 'bar'; else kind = 'gate';
+    const o = { kind, x: W + 40 };
+    if (kind === 'rock') { o.w = 34; o.h = 40; }
+    else if (kind === 'spike') { o.w = 46; o.h = 30; }
+    else if (kind === 'gate') { o.w = 28; o.h = 100; }
+    else { o.w = 54; o.h = 54; o.bOff = 32; o.bH = 54; }
+    obstacles.push(o);
+  }
+  function spawnCoins() {
+    const high = Math.random() < 0.5;
+    const n = RJ.randi(3, 5);
+    const baseY = high ? RJ.rand(60, 95) : RJ.rand(8, 20);
+    for (let i = 0; i < n; i++) {
+      coins.push({ x: W + 60 + i * 30, y: baseY + (high ? Math.sin(i * 0.9) * 14 : 0) });
+    }
+  }
+
+  function hitboxTop() {
+    const h = player.sliding ? SLIDE_H : STAND_H;
+    return GY - player.y - h;
+  }
+  function hitboxBottom() { return GY - player.y; }
+
+  function killPlayer() {
+    if (player.deadT > 0) return;
+    player.deadT = 0.01; running = false; shakeT = 0.35;
+    for (let i = 0; i < 16; i++) particles.push({ x: PX, y: GY - player.y - 24, t: 0, big: true, a: Math.random() * 6.28, sp: RJ.rand(60, 220) });
+    RJ.sfx('boom');
+    const score = meters + coinN * 5;
+    RJ.over({ title: '撞上了！', sub: `跑了 ${meters} 米 · 金币 ${coinN}`, score });
+  }
+
+  function update(dt) {
+    shakeT = Math.max(0, shakeT - dt);
+    for (const p of particles) p.t += dt;
+    particles = particles.filter((p) => p.t < 0.6);
+    hill1 = (hill1 + speed * 0.25 * dt) % 400;
+    hill2 = (hill2 + speed * 0.45 * dt) % 300;
+    if (!running) return;
+
+    const jk = RJ.keys[' '] || RJ.keys['ArrowUp'] || RJ.keys['w'] || RJ.keys['W'];
+    if (jk && !prevJump) doJump();
+    prevJump = jk;
+    const sk = RJ.keys['ArrowDown'] || RJ.keys['s'] || RJ.keys['S'];
+    if (sk && !prevSlide) doSlide();
+    prevSlide = sk;
+
+    player.vy -= GRAV * dt;
+    player.y = Math.max(0, player.y + player.vy * dt);
+    if (player.y <= 0) { player.y = 0; if (player.vy < 0) player.vy = 0; player.jumps = 0; }
+    if (player.sliding) { player.slideT -= dt; if (player.slideT <= 0) player.sliding = false; }
+    player.phase += dt * (player.y > 2 ? 0 : 6 + speed / 90);
+
+    totalPx += speed * dt;
+    meters = Math.floor(totalPx / 28);
+    speed = Math.min(560, 230 + meters * 1.5);
+
+    spawnT -= dt;
+    if (spawnT <= 0) { spawnObstacle(); spawnT = Math.max(0.95, 1.9 - speed / 500); }
+    coinT -= dt;
+    if (coinT <= 0) { spawnCoins(); coinT = RJ.rand(2.2, 3.4); }
+
+    const pTop = hitboxTop(), pBot = hitboxBottom(), pL = PX - PW / 2, pR = PX + PW / 2;
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const o = obstacles[i];
+      o.x -= speed * dt;
+      if (o.x < -70) { obstacles.splice(i, 1); continue; }
+      const oL = o.x - o.w / 2, oR = o.x + o.w / 2;
+      if (oR < pL || oL > pR) continue;
+      let oTop, oBot;
+      if (o.kind === 'bar') { oBot = GY - o.bOff; oTop = oBot - o.bH; }
+      else { oBot = GY; oTop = GY - o.h; }
+      if (pTop < oBot && pBot > oTop) killPlayer();
+    }
+    for (let i = coins.length - 1; i >= 0; i--) {
+      const c = coins[i];
+      c.x -= speed * dt;
+      if (c.x < -20) { coins.splice(i, 1); continue; }
+      const cy = GY - c.y;
+      if (Math.abs(c.x - PX) < PW / 2 + 10 && cy > pTop - 6 && cy < pBot + 6) {
+        coins.splice(i, 1); coinN++; RJ.sfx('coin');
+        particles.push({ x: c.x, y: cy, t: 0, coin: true });
+      }
+    }
+  }
+
+  function drawPlayer() {
+    if (player.deadT > 0) return;
+    const h = player.sliding ? SLIDE_H : STAND_H;
+    const cx = PX, cy = GY - player.y - h / 2;
+    ctx.save(); ctx.translate(cx, cy);
+    const squish = player.sliding ? 1 : 1;
+    ctx.scale(squish, 1);
+    const legSwing = Math.sin(player.phase) * (player.y > 2 || player.sliding ? 0 : 1);
+    if (!player.sliding) {
+      ctx.strokeStyle = '#a85a2a'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-6, h / 2 - 4); ctx.lineTo(-6 + legSwing * 10, h / 2 + 14); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(6, h / 2 - 4); ctx.lineTo(6 - legSwing * 10, h / 2 + 14); ctx.stroke();
+      ctx.fillStyle = '#ff8a3c'; RJ.rr(ctx, -13, -h / 2 + 16, 26, h - 20, 12); ctx.fill();
+      ctx.fillStyle = '#4fd1ff'; ctx.beginPath(); ctx.arc(0, -h / 2 + 8, 13, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#ff8a3c'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(-11, -4); ctx.lineTo(-11 - legSwing * 8, 8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(11, -4); ctx.lineTo(11 + legSwing * 8, 8); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#ff8a3c'; RJ.rr(ctx, -20, -h / 2, 34, h, 10); ctx.fill();
+      ctx.fillStyle = '#4fd1ff'; ctx.beginPath(); ctx.arc(-14, 0, 11, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = '#17203f';
+    ctx.beginPath(); ctx.arc(player.sliding ? -17 : 4, player.sliding ? -2 : -h / 2 + 6, 2.4, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawObstacle(o) {
+    ctx.save(); ctx.translate(o.x, 0);
+    if (o.kind === 'rock') {
+      ctx.fillStyle = '#8a8f9e';
+      ctx.beginPath(); ctx.moveTo(-o.w / 2, GY); ctx.lineTo(-o.w / 2 + 4, GY - o.h); ctx.lineTo(0, GY - o.h - 6); ctx.lineTo(o.w / 2 - 3, GY - o.h + 4); ctx.lineTo(o.w / 2, GY); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#5c6070'; ctx.lineWidth = 2; ctx.stroke();
+    } else if (o.kind === 'spike') {
+      ctx.fillStyle = '#e0524a';
+      const n = 3, sw = o.w / n;
+      for (let i = 0; i < n; i++) { ctx.beginPath(); ctx.moveTo(-o.w / 2 + i * sw, GY); ctx.lineTo(-o.w / 2 + i * sw + sw / 2, GY - o.h); ctx.lineTo(-o.w / 2 + (i + 1) * sw, GY); ctx.closePath(); ctx.fill(); }
+    } else if (o.kind === 'gate') {
+      ctx.fillStyle = '#7a5cc9'; RJ.rr(ctx, -o.w / 2, GY - o.h, o.w, o.h, 6); ctx.fill();
+      ctx.fillStyle = '#b79cff'; RJ.rr(ctx, -o.w / 2 + 5, GY - o.h + 8, o.w - 10, o.h - 16, 4); ctx.fill();
+    } else if (o.kind === 'bar') {
+      const bT = GY - o.bOff - o.bH, bB = GY - o.bOff;
+      const g = ctx.createLinearGradient(0, bT, 0, bB); g.addColorStop(0, '#37e6c9'); g.addColorStop(1, '#12a8c4');
+      ctx.fillStyle = g; RJ.rr(ctx, -o.w / 2, bT, o.w, bB - bT, 8); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.arc(i * 10, (bT + bB) / 2, 2.5, 0, 7); ctx.fill(); }
+    }
+    ctx.restore();
+  }
+
+  function drawCoin(c) {
+    const cy = GY - c.y;
+    ctx.save(); ctx.translate(c.x, cy);
+    const s = Math.abs(Math.sin(performance.now() / 240 + c.x));
+    ctx.scale(0.5 + s * 0.5, 1);
+    const g = ctx.createRadialGradient(-3, -3, 1, 0, 0, 11); g.addColorStop(0, '#fff3b0'); g.addColorStop(1, '#ffb800');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 11, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#e08e00'; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.save();
+    if (shakeT > 0) ctx.translate(RJ.rand(-4, 4) * (shakeT / 0.35), RJ.rand(-4, 4) * (shakeT / 0.35));
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#8fd3ff'); g.addColorStop(0.6, '#cdeeff'); g.addColorStop(1, '#eafff5');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.7)';
+    for (let i = 0; i < 4; i++) { const x = ((i * 130 - hill2 * 0.6) % (W + 120)) - 60; ctx.beginPath(); ctx.ellipse(x, 70 + (i % 2) * 20, 36, 14, 0, 0, 7); ctx.ellipse(x + 24, 66 + (i % 2) * 20, 26, 11, 0, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#bfe6a0';
+    for (let i = 0; i < 3; i++) { const x = ((i * 220 - hill1) % (W + 260)) - 100; ctx.beginPath(); ctx.ellipse(x, GY - 6, 140, 46, 0, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#6fae4a'; ctx.fillRect(0, GY, W, H - GY);
+    ctx.strokeStyle = 'rgba(0,0,0,.12)'; ctx.lineWidth = 3;
+    for (let i = 0; i < 14; i++) { const x = ((i * 28 - totalPx) % (W + 28)); ctx.beginPath(); ctx.moveTo(x, GY + 6); ctx.lineTo(x + 14, GY + 6); ctx.stroke(); }
+
+    for (const c of coins) drawCoin(c);
+    for (const o of obstacles) drawObstacle(o);
+    drawPlayer();
+
+    for (const p of particles) {
+      if (p.coin) {
+        ctx.globalAlpha = 1 - p.t / 0.6; ctx.fillStyle = '#ffb800'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('+5', p.x, p.y - p.t * 40); ctx.globalAlpha = 1;
+      } else {
+        const k = p.t / 0.6, r = 3 + k * 5;
+        ctx.globalAlpha = 1 - k; ctx.fillStyle = k < 0.5 ? '#ffd94a' : '#ff5a3c';
+        ctx.beginPath(); ctx.arc(p.x + Math.cos(p.a) * p.sp * p.t, p.y + Math.sin(p.a) * p.sp * p.t - 60 * p.t * p.t, r, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+      }
+    }
+    ctx.restore();
+    pill('dist', `距离 ${meters}m`); pill('coin', `金币 ${coinN}`);
+  }
+
+  RJ.loop(update, draw);
+  player = { y: 0, vy: 0, jumps: 0, sliding: false, slideT: 0, phase: 0, deadT: 0 };
+  obstacles = []; coins = []; particles = []; totalPx = 0; speed = 230; running = false; meters = 0; coinN = 0; shakeT = 0;
+})();
+</script></body></html>

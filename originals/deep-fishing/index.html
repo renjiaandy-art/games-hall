@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>深海捕鱼</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640, CANX = W / 2, CANY = H - 46, ROUND_T = 80;
+  const FTYPE = {
+    blue: { hp: 1, value: 5, r: 13, speed: [90, 130], color: '#4fb7ff', w: 1.6 },
+    stripe: { hp: 2, value: 12, r: 15, speed: [65, 95], color: '#ffce4a', w: 1.2 },
+    shrimp: { hp: 1, value: 4, r: 9, speed: [110, 150], color: '#ff9a6a', w: 1.4, cluster: 3 },
+    jelly: { hp: 3, value: 22, r: 17, speed: [30, 48], color: '#c98cff', w: 0.9, wavy: true },
+    dragon: { hp: 6, value: 45, r: 20, speed: [40, 60], color: '#ff6a5a', w: 0.55, long: true },
+    king: { hp: 9, value: 160, r: 24, speed: [26, 36], color: '#ffd23c', w: 0.16, glow: true },
+  };
+  RJ.init({
+    id: 'deep-fishing', title: '深海捕鱼', icon: '🎣', subtitle: '点哪打哪，升级炮台捕获原创深海鱼群，限时冲高分！',
+    howto: '• 点击 / 按住屏幕任意位置开火，炮台会朝该方向发射捕鱼网，鼠标点击、方向键+空格同样可玩<br>• 不同鱼类血量、分值不同：小鱼易打分低，🟡金鳞鱼稀有但分值极高<br>• 用捕获得到的虚拟金币升级炮台威力，金币纯属娱乐、无需付费、金币耗尽会自动免费补给<br>• 限时 80 秒，结束时金币总数就是本轮分数',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['coin', 'lv', 'time']);
+  const upBtn = RJ.hudButton('升级炮台', upgradeCannon);
+
+  let running, coins, level, shotCost, dmg, caught, timeLeft, fishes, bullets, particles, bubbles, spawnT, aim, isDown, fireCd, prevFire;
+
+  const LV_COST = [0, 120, 260, 480, 800];
+  const LV_MULT = [0, 1, 1.35, 1.75, 2.2, 2.7];
+
+  function startGame() {
+    running = true; coins = 300; level = 1; caught = 0; timeLeft = ROUND_T;
+    shotCost = 10; dmg = 1;
+    fishes = []; bullets = []; particles = []; spawnT = 0.6; aim = { x: W / 2, y: H / 2 }; isDown = false; fireCd = 0; prevFire = false;
+    bubbles = Array.from({ length: 18 }, () => ({ x: RJ.rand(10, W - 10), y: RJ.rand(0, H), s: RJ.rand(2, 5), sp: RJ.rand(18, 40) }));
+    recalc();
+  }
+  function recalc() { shotCost = 8 + (level - 1) * 6; dmg = level; }
+
+  function upgradeCannon() {
+    if (!running) return;
+    if (level >= 5) { RJ.toast('已达最高等级'); return; }
+    const cost = LV_COST[level];
+    if (coins < cost) { RJ.toast('金币不足，先去捕鱼吧'); return; }
+    coins -= cost; level++; recalc(); RJ.sfx('pop'); RJ.toast(`炮台升级至 Lv.${level}`);
+  }
+
+  function spawnFish() {
+    const roll = Math.random(); let acc = 0, kind = 'blue';
+    const total = Object.values(FTYPE).reduce((s, t) => s + t.w, 0);
+    const r = roll * total;
+    for (const k in FTYPE) { acc += FTYPE[k].w; if (r <= acc) { kind = k; break; } }
+    const t = FTYPE[kind];
+    const fromLeft = Math.random() < 0.5;
+    const y = RJ.rand(90, H - 180);
+    const speed = RJ.rand(t.speed[0], t.speed[1]) * (fromLeft ? 1 : -1);
+    const n = t.cluster || 1;
+    for (let i = 0; i < n; i++) {
+      fishes.push({
+        kind, hp: t.hp, maxHp: t.hp, x: fromLeft ? -30 - i * 26 : W + 30 + i * 26, y: y + (i - (n - 1) / 2) * 20,
+        vy0: y + (i - (n - 1) / 2) * 20, vx: speed, phase: Math.random() * 6.28, flip: speed < 0,
+      });
+    }
+  }
+
+  function fire(target) {
+    if (!running) return;
+    if (coins < shotCost) { RJ.toast('金币不足'); return; }
+    coins -= shotCost;
+    const ang = Math.atan2(target.y - CANY, target.x - CANX);
+    const bx = CANX + Math.cos(ang) * 30, by = CANY + Math.sin(ang) * 30;
+    bullets.push({ x: bx, y: by, vx: Math.cos(ang) * 480, vy: Math.sin(ang) * 480, t: 0 });
+    RJ.sfx('shoot');
+  }
+
+  view.onPointer(
+    (p) => { isDown = true; aim.x = p.x; aim.y = p.y; fire(aim); fireCd = 0.32; },
+    (p) => { aim.x = p.x; aim.y = p.y; },
+    () => { isDown = false; },
+  );
+
+  function catchFish(f) {
+    const t = FTYPE[f.kind];
+    const gain = Math.round(t.value * LV_MULT[level]);
+    coins += gain; caught++;
+    particles.push({ x: f.x, y: f.y, t: 0, coin: true, gain });
+    for (let i = 0; i < 8; i++) particles.push({ x: f.x, y: f.y, t: 0, a: Math.random() * 6.28, sp: RJ.rand(40, 140), color: t.color });
+    RJ.sfx('coin');
+  }
+
+  function update(dt) {
+    for (const b of bubbles) { b.y -= b.sp * dt; if (b.y < -10) { b.y = H + 10; b.x = RJ.rand(10, W - 10); } }
+    particles.forEach((p) => (p.t += dt));
+    particles = particles.filter((p) => p.t < 0.8);
+    if (!running) return;
+
+    const kAim = { x: 0, y: 0 };
+    if (RJ.keys.ArrowLeft) kAim.x -= 1; if (RJ.keys.ArrowRight) kAim.x += 1;
+    if (RJ.keys.ArrowUp) kAim.y -= 1; if (RJ.keys.ArrowDown) kAim.y += 1;
+    if (kAim.x || kAim.y) { aim.x = Math.max(10, Math.min(W - 10, aim.x + kAim.x * 260 * dt)); aim.y = Math.max(10, Math.min(H - 120, aim.y + kAim.y * 260 * dt)); }
+    const fk = RJ.keys[' '] || RJ.keys.Enter;
+    if (fk && !prevFire) fire(aim);
+    prevFire = fk;
+
+    if (isDown) { fireCd -= dt; if (fireCd <= 0) { fire(aim); fireCd = 0.32; } }
+    if (coins <= 0) { coins = 200; RJ.toast('金币耗尽，免费补给 200 枚'); }
+
+    spawnT -= dt;
+    if (spawnT <= 0) { spawnFish(); spawnT = RJ.rand(0.55, 1.1); }
+
+    for (const f of fishes) {
+      f.x += f.vx * dt;
+      f.y = f.vy0 + (FTYPE[f.kind].wavy ? Math.sin(f.phase + performance.now() / 500) * 18 : 0);
+      f.phase += dt;
+    }
+    fishes = fishes.filter((f) => f.x > -60 && f.x < W + 60);
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.x += b.vx * dt; b.y += b.vy * dt; b.t += dt;
+      if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20 || b.t > 1.4) { bullets.splice(i, 1); continue; }
+      for (let j = fishes.length - 1; j >= 0; j--) {
+        const f = fishes[j], t = FTYPE[f.kind];
+        if (Math.hypot(b.x - f.x, b.y - f.y) < t.r + 6) {
+          f.hp -= dmg; bullets.splice(i, 1); RJ.sfx('hit');
+          if (f.hp <= 0) { catchFish(f); fishes.splice(j, 1); }
+          break;
+        }
+      }
+    }
+
+    timeLeft -= dt;
+    if (timeLeft <= 0) {
+      timeLeft = 0; running = false;
+      RJ.over({ title: '捕鱼结束', sub: `共捕获 ${caught} 条鱼 · 炮台 Lv.${level}`, score: coins });
+    }
+  }
+
+  function drawFish(f) {
+    const t = FTYPE[f.kind];
+    ctx.save(); ctx.translate(f.x, f.y); if (f.flip) ctx.scale(-1, 1);
+    if (t.glow) { ctx.shadowColor = '#ffe27a'; ctx.shadowBlur = 16; }
+    ctx.fillStyle = t.color;
+    const r = t.r, len = t.long ? r * 2.6 : r * 1.7;
+    ctx.beginPath(); ctx.ellipse(0, 0, len, r, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(-len - r * 0.9, -r * 0.7); ctx.lineTo(-len - r * 0.9, r * 0.7); ctx.closePath(); ctx.fill();
+    if (t.wavy) { ctx.strokeStyle = t.color; ctx.lineWidth = 3; for (let i = -1; i <= 1; i += 2) { ctx.beginPath(); ctx.moveTo(i * r * 0.6, r * 0.6); ctx.quadraticCurveTo(i * r * 0.6 + 6, r * 1.6 + Math.sin(f.phase * 3) * 4, i * r * 0.6, r * 2.2); ctx.stroke(); } }
+    ctx.fillStyle = '#17203f'; ctx.beginPath(); ctx.arc(len * 0.45, -r * 0.2, r * 0.14, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0;
+    if (f.maxHp > 1) {
+      const bw = len * 1.6;
+      ctx.fillStyle = 'rgba(0,0,0,.35)'; RJ.rr(ctx, -bw / 2, -r - 12, bw, 4, 2); ctx.fill();
+      ctx.fillStyle = '#5cff8f'; RJ.rr(ctx, -bw / 2, -r - 12, bw * Math.max(0, f.hp / f.maxHp), 4, 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawCannon() {
+    const ang = Math.atan2(aim.y - CANY, aim.x - CANX);
+    ctx.save(); ctx.translate(CANX, CANY);
+    ctx.fillStyle = '#2a6b8a'; RJ.rr(ctx, -34, -6, 68, 30, 10); ctx.fill();
+    ctx.fillStyle = '#1c4a63'; ctx.beginPath(); ctx.ellipse(0, -4, 30, 16, 0, 0, 7); ctx.fill();
+    ctx.rotate(ang);
+    ctx.fillStyle = '#ffce4a'; RJ.rr(ctx, 0, -8, 38, 16, 6); ctx.fill();
+    ctx.restore();
+  }
+
+  function draw() {
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#0a3d5c'); g.addColorStop(1, '#031622');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.22)';
+    for (const b of bubbles) { ctx.beginPath(); ctx.arc(b.x, b.y, b.s, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#0e5d3a';
+    ctx.beginPath(); ctx.moveTo(20, H - 40); ctx.quadraticCurveTo(35, H - 110, 24, H - 160); ctx.quadraticCurveTo(40, H - 100, 30, H - 40); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(W - 20, H - 40); ctx.quadraticCurveTo(W - 35, H - 120, W - 24, H - 170); ctx.quadraticCurveTo(W - 40, H - 110, W - 30, H - 40); ctx.fill();
+
+    for (const f of fishes) drawFish(f);
+
+    ctx.fillStyle = '#eafcff';
+    for (const b of bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, 7); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(b.x - 8, b.y); ctx.lineTo(b.x + 8, b.y); ctx.moveTo(b.x, b.y - 8); ctx.lineTo(b.x, b.y + 8); ctx.stroke(); }
+
+    ctx.save(); ctx.globalAlpha = 0.85; ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(aim.x - 10, aim.y); ctx.lineTo(aim.x + 10, aim.y); ctx.moveTo(aim.x, aim.y - 10); ctx.lineTo(aim.x, aim.y + 10); ctx.stroke(); ctx.restore();
+
+    drawCannon();
+
+    for (const p of particles) {
+      if (p.coin) { ctx.globalAlpha = 1 - p.t / 0.8; ctx.fillStyle = '#ffd23c'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('+' + p.gain, p.x, p.y - p.t * 40); ctx.globalAlpha = 1; }
+      else { const k = p.t / 0.8; ctx.globalAlpha = 1 - k; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x + Math.cos(p.a) * p.sp * p.t, p.y + Math.sin(p.a) * p.sp * p.t, 3, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
+    }
+
+    pill('coin', `💰 ${coins}`); pill('lv', `炮台 Lv.${level}`); pill('time', `⏱ ${Math.ceil(timeLeft)}s`);
+    upBtn.textContent = level >= 5 ? '已满级' : `升级💰${LV_COST[level]}`;
+  }
+
+  RJ.loop(update, draw);
+  running = false; coins = 300; level = 1; caught = 0; timeLeft = ROUND_T;
+  fishes = []; bullets = []; particles = []; spawnT = 0.6; aim = { x: W / 2, y: H / 2 }; isDown = false; fireCd = 0;
+  bubbles = Array.from({ length: 18 }, () => ({ x: RJ.rand(10, W - 10), y: RJ.rand(0, H), s: RJ.rand(2, 5), sp: RJ.rand(18, 40) }));
+  recalc();
+})();
+</script></body></html>
