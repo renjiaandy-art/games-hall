@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>小蛙过河</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640, COLS = 9, COLW = 40, ROWH = 40, HOP_DUR = 0.14;
+  const HOME_ROW = 0, RIVER_ROWS = [1, 2, 3, 4, 5], MEDIAN_ROW = 6, ROAD_ROWS = [7, 8, 9, 10, 11], START_ROW = 15;
+  const VALID_HOME_COLS = [0, 2, 4, 6, 8];
+
+  RJ.init({
+    id: 'frog-cross', title: '小蛙过河', icon: '🐸', subtitle: '跳格穿过车流与河面，回到 5 个家',
+    howto: '• 滑动屏幕方向 / 右下方向键 / 键盘方向键，一次跳一格<br>• 先穿过车道，别被车撞到<br>• 再踩着木头和乌龟过河，掉水里就没命<br>• 乌龟会不时下潜，下潜时别站上去<br>• 跳进 5 个空巢就算到家，全部到家进入下一关，越来越快<br>• 时间耗尽也会失去一条命',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['lv', 'lives', 'time', 'score']);
+
+  const LANE_CFG = [
+    { row: 1, type: 'log', dir: 1, speed: 55, segW: 70, gap: 55, count: 4, color: '#8a5a2b' },
+    { row: 2, type: 'turtle', dir: -1, speed: 65, segW: 52, gap: 60, count: 4, color: '#2ea36b' },
+    { row: 3, type: 'log', dir: 1, speed: 85, segW: 60, gap: 60, count: 4, color: '#8a5a2b' },
+    { row: 4, type: 'turtle', dir: -1, speed: 75, segW: 52, gap: 65, count: 4, color: '#2ea36b' },
+    { row: 5, type: 'log', dir: 1, speed: 100, segW: 80, gap: 50, count: 4, color: '#8a5a2b' },
+    { row: 7, type: 'car', dir: -1, speed: 105, segW: 34, gap: 70, count: 4, color: '#e0524a' },
+    { row: 8, type: 'car', dir: 1, speed: 90, segW: 34, gap: 80, count: 4, color: '#4fa0e0' },
+    { row: 9, type: 'car', dir: -1, speed: 125, segW: 30, gap: 65, count: 5, color: '#e0b34a' },
+    { row: 10, type: 'car', dir: 1, speed: 100, segW: 34, gap: 75, count: 4, color: '#a05ae0' },
+    { row: 11, type: 'car', dir: -1, speed: 145, segW: 30, gap: 60, count: 5, color: '#e0524a' },
+  ];
+
+  function rowY(r) { return r * ROWH + ROWH / 2; }
+  function colX(c) { return c * COLW + COLW / 2; }
+  function timeLimit() { return Math.max(15, 30 - (level - 1) * 1.5); }
+
+  let frog, lanes, homes, particles, dpad;
+  let running, level, score, lives, timeLeft;
+
+  function makeLane(cfg) {
+    const total = cfg.count * (cfg.segW + cfg.gap);
+    const segs = Array.from({ length: cfg.count }, (_, i) => ({ x: i * (cfg.segW + cfg.gap) + RJ.rand(-10, 10) }));
+    return { ...cfg, total, segs, diveT: RJ.rand(3, 4.5), diveState: 'up', diveIdx: 0 };
+  }
+  function buildLanes() { return LANE_CFG.map(makeLane); }
+
+  function resetFrog() {
+    frog = { x: colX(4), y: rowY(START_ROW), row: START_ROW, hopping: false, hopT: 0, fromX: 0, fromY: 0, toX: 0, toY: 0, toRow: START_ROW, maxRow: START_ROW };
+  }
+
+  function startGame() {
+    lanes = buildLanes(); homes = VALID_HOME_COLS.reduce((o, c) => (o[c] = false, o), {});
+    particles = []; resetFrog();
+    running = true; level = 1; score = 0; lives = 3; timeLeft = timeLimit();
+  }
+
+  function explode(x, y) { particles.push({ x, y, t: 0 }); RJ.sfx('boom'); }
+
+  function endGame(sub) { running = false; RJ.over({ title: '游戏结束', sub: sub || '', score, win: false }); }
+
+  function loseLife(reason) {
+    if (!running) return;
+    lives--; explode(frog.x, frog.y); RJ.sfx('bad'); RJ.toast(reason, 900);
+    if (lives <= 0) { endGame(`坚持到第 ${level} 关`); return; }
+    resetFrog(); timeLeft = timeLimit();
+  }
+
+  function reachHome() {
+    const col = Math.round((frog.x - COLW / 2) / COLW);
+    if (!VALID_HOME_COLS.includes(col) || homes[col]) { loseLife('落错位置'); return; }
+    homes[col] = true; score += 200 + Math.round(timeLeft * 5); RJ.sfx('coin'); RJ.toast('到家啦！', 800);
+    resetFrog(); timeLeft = timeLimit();
+    if (VALID_HOME_COLS.every((c) => homes[c])) {
+      level++; VALID_HOME_COLS.forEach((c) => (homes[c] = false));
+      for (const ln of lanes) ln.speed *= 1.12;
+      score += 500;
+      RJ.toast(`第 ${level} 关！`, 1300);
+    }
+  }
+
+  function onLanded() {
+    if (frog.row < frog.maxRow) { frog.maxRow = frog.row; score += 10; }
+    if (frog.row === HOME_ROW) reachHome();
+  }
+
+  function tryHop(dx, dy) {
+    if (!running || frog.hopping) return;
+    const nr = frog.row + dy;
+    if (nr < HOME_ROW || nr > START_ROW) return;
+    let nx = Math.max(colX(0), Math.min(colX(COLS - 1), frog.x + dx * COLW));
+    if (dx !== 0 && Math.abs(nx - frog.x) < 1) return;
+    frog.hopping = true; frog.hopT = 0; frog.fromX = frog.x; frog.fromY = frog.y;
+    frog.toX = nx; frog.toY = rowY(nr); frog.toRow = nr;
+    RJ.sfx('move');
+  }
+
+  function checkStanding(dt) {
+    if (RIVER_ROWS.includes(frog.row)) {
+      const lane = lanes.find((l) => l.row === frog.row);
+      let support = null;
+      for (const seg of lane.segs) if (frog.x >= seg.x - 4 && frog.x <= seg.x + lane.segW + 4) { support = seg; break; }
+      const safe = support && !(lane.type === 'turtle' && lane.diveState === 'sunk');
+      if (!safe) { loseLife('掉进水里'); return; }
+      frog.x += lane.dir * lane.speed * dt;
+      if (frog.x < -10 || frog.x > W + 10) { loseLife('被冲出画面'); return; }
+    } else if (ROAD_ROWS.includes(frog.row)) {
+      const lane = lanes.find((l) => l.row === frog.row);
+      for (const seg of lane.segs) if (frog.x >= seg.x - 4 && frog.x <= seg.x + lane.segW + 4) { loseLife('被撞了'); return; }
+    }
+  }
+
+  function update(dt) {
+    for (const ln of lanes) {
+      for (const seg of ln.segs) {
+        seg.x += ln.dir * ln.speed * dt;
+        if (ln.dir > 0 && seg.x > W) seg.x -= ln.total;
+        else if (ln.dir < 0 && seg.x + ln.segW < 0) seg.x += ln.total;
+      }
+      if (ln.type === 'turtle') {
+        ln.diveT -= dt;
+        if (ln.diveT <= 0) {
+          ln.diveIdx = (ln.diveIdx + 1) % 3; ln.diveState = ['up', 'warn', 'sunk'][ln.diveIdx];
+          ln.diveT = ln.diveState === 'up' ? RJ.rand(3, 4.5) : ln.diveState === 'warn' ? 1 : 1.6;
+        }
+      }
+    }
+    particles = particles.filter((p) => (p.t += dt) < 0.5);
+    if (!running) return;
+    timeLeft -= dt;
+    if (timeLeft <= 0) { loseLife('时间耗尽'); return; }
+    if (frog.hopping) {
+      frog.hopT += dt / HOP_DUR;
+      if (frog.hopT >= 1) { frog.hopT = 1; frog.x = frog.toX; frog.y = frog.toY; frog.row = frog.toRow; frog.hopping = false; onLanded(); }
+    } else checkStanding(dt);
+  }
+
+  function drawBands() {
+    for (let r = 0; r < 16; r++) {
+      const y = r * ROWH;
+      ctx.fillStyle = r === HOME_ROW ? '#1c4d3a' : RIVER_ROWS.includes(r) ? '#1e4a7a' : r === MEDIAN_ROW ? '#2e6b3e' : ROAD_ROWS.includes(r) ? '#2b2b34' : '#2e6b3e';
+      ctx.fillRect(0, y, W, ROWH);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,.08)';
+    for (let r = 0; r <= 16; r++) { ctx.beginPath(); ctx.moveTo(0, r * ROWH); ctx.lineTo(W, r * ROWH); ctx.stroke(); }
+  }
+
+  function drawHomes() {
+    for (let c = 0; c < COLS; c++) {
+      const x = colX(c), y = rowY(HOME_ROW);
+      if (VALID_HOME_COLS.includes(c)) {
+        ctx.fillStyle = homes[c] ? '#3ddc84' : 'rgba(255,255,255,.25)';
+        ctx.beginPath(); ctx.ellipse(x, y, 16, 11, 0, 0, 7); ctx.fill();
+        if (homes[c]) { ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🐸', x, y); }
+      } else {
+        ctx.fillStyle = '#123324';
+        for (let i = -1; i <= 1; i++) { ctx.fillRect(x - 14 + (i + 1) * 10 - 3, y - 12, 6, 24); }
+      }
+    }
+  }
+
+  function drawLane(ln) {
+    for (const seg of ln.segs) {
+      const y = rowY(ln.row);
+      if (ln.type === 'car') {
+        ctx.fillStyle = ln.color; RJ.rr(ctx, seg.x, y - 11, ln.segW, 22, 6); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillRect(seg.x + ln.segW * 0.3, y - 6, ln.segW * 0.4, 12);
+        ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(seg.x + 6, y + 11, 3, 0, 7); ctx.arc(seg.x + ln.segW - 6, y + 11, 3, 0, 7); ctx.fill();
+      } else if (ln.type === 'log') {
+        ctx.fillStyle = ln.color; RJ.rr(ctx, seg.x, y - 12, ln.segW, 24, 10); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1.5;
+        for (let i = 1; i < 3; i++) { ctx.beginPath(); ctx.moveTo(seg.x + 4, y - 12 + i * 8); ctx.lineTo(seg.x + ln.segW - 4, y - 12 + i * 8); ctx.stroke(); }
+      } else {
+        const alpha = ln.diveState === 'sunk' ? 0 : ln.diveState === 'warn' ? (0.4 + 0.5 * Math.abs(Math.sin(ln.diveT * 8))) : 1;
+        if (ln.diveState === 'sunk') { ctx.strokeStyle = 'rgba(120,200,255,.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(seg.x + ln.segW / 2, y, 14, 0, 7); ctx.stroke(); continue; }
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = ln.color; ctx.beginPath(); ctx.ellipse(seg.x + ln.segW / 2, y, ln.segW / 2, 11, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.ellipse(seg.x + ln.segW / 2, y, ln.segW / 2 - 6, 6, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = ln.color; ctx.beginPath(); ctx.arc(seg.x + (ln.dir > 0 ? ln.segW + 3 : -3), y, 6, 0, 7); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function drawFrog() {
+    let x = frog.x, y = frog.y, squash = 1;
+    if (frog.hopping) {
+      const t = frog.hopT, e = 1 - (1 - t) * (1 - t);
+      x = frog.fromX + (frog.toX - frog.fromX) * e; y = frog.fromY + (frog.toY - frog.fromY) * e - Math.sin(t * Math.PI) * 14;
+      squash = 1 + Math.sin(t * Math.PI) * 0.18;
+    }
+    ctx.save(); ctx.translate(x, y); ctx.scale(1 / squash, squash);
+    ctx.fillStyle = '#3ddc84'; ctx.beginPath(); ctx.ellipse(0, 2, 13, 10, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#eafff0';
+    ctx.beginPath(); ctx.arc(-6, -6, 4.5, 0, 7); ctx.arc(6, -6, 4.5, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1a3a24'; ctx.beginPath(); ctx.arc(-6, -6, 2, 0, 7); ctx.arc(6, -6, 2, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  function draw() {
+    drawBands();
+    for (const ln of lanes) drawLane(ln);
+    drawHomes();
+    drawFrog();
+    for (const p of particles) {
+      const k = p.t / 0.5, r = 22 * k;
+      ctx.globalAlpha = 1 - k; ctx.fillStyle = '#ffd94a';
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    }
+    pill('lv', `第${level || 1}关`); pill('lives', '❤'.repeat(Math.max(0, lives || 0)) || '💀');
+    pill('time', `⏱${Math.max(0, Math.ceil(timeLeft || 0))}`); pill('score', `分数 ${score || 0}`);
+  }
+
+  // input: keyboard (discrete), swipe, and on-screen d-pad
+  addEventListener('keydown', (e) => {
+    const map = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] };
+    if (map[e.key]) { e.preventDefault(); tryHop(map[e.key][0], map[e.key][1]); }
+  });
+  let swipeStart = null;
+  view.c.addEventListener('pointerdown', (e) => { swipeStart = { x: e.clientX, y: e.clientY }; });
+  view.c.addEventListener('pointerup', (e) => {
+    if (!swipeStart) return;
+    const dx = e.clientX - swipeStart.x, dy = e.clientY - swipeStart.y; swipeStart = null;
+    const adx = Math.abs(dx), ady = Math.abs(dy), TH = 22;
+    if (Math.max(adx, ady) < TH) return;
+    if (adx > ady) tryHop(dx > 0 ? 1 : -1, 0); else tryHop(0, dy > 0 ? 1 : -1);
+  });
+  function buildDpad() {
+    dpad = document.createElement('div');
+    dpad.style.cssText = 'position:fixed;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);width:144px;height:144px;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:6px;z-index:25;';
+    const mk = (label, dx, dy, area) => {
+      const b = document.createElement('button'); b.textContent = label;
+      b.style.cssText = 'border:0;border-radius:14px;background:rgba(255,255,255,.18);color:#fff;font-size:20px;font-weight:700;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);';
+      b.style.gridArea = area;
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); tryHop(dx, dy); });
+      dpad.appendChild(b);
+    };
+    mk('▲', 0, -1, '1/2/2/3'); mk('◀', -1, 0, '2/1/3/2'); mk('▶', 1, 0, '2/3/3/4'); mk('▼', 0, 1, '3/2/4/3');
+    document.body.appendChild(dpad);
+  }
+  buildDpad();
+
+  RJ.loop(update, draw);
+
+  lanes = buildLanes(); homes = VALID_HOME_COLS.reduce((o, c) => (o[c] = false, o), {});
+  particles = []; resetFrog(); running = false; level = 1; score = 0; lives = 3; timeLeft = timeLimit();
+})();
+</script></body></html>
