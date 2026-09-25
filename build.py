@@ -380,13 +380,54 @@ background:var(--glass);border:1px solid var(--border);-webkit-backdrop-filter:b
 box-shadow:0 10px 30px rgba(10,14,40,.25),inset 0 1px 0 rgba(255,255,255,.5);transition:transform .15s}
 .card:active{transform:scale(.97)} @media(hover:hover){.card:hover{transform:translateY(-3px)}}
 .icon{font-size:38px;line-height:1} .name{font-weight:700;font-size:16px} .desc{font-size:12.5px;opacity:.78;line-height:1.4}
+h2{font-size:18px;margin:24px 4px 12px} h2 small{font-size:12px;font-weight:400;opacity:.7;margin-left:6px}
+.tag{font-size:10.5px;font-weight:700;margin-left:6px;padding:2px 6px;border-radius:8px;background:#ff9f0a;vertical-align:2px}
 .foot{margin-top:28px;font-size:12px;opacity:.6;line-height:1.7} .foot a{color:#fff}
 </style></head><body><div class="wrap">
 <h1>🎮 游戏大厅</h1><p class="sub">{count} 款开源小游戏，全部在浏览器里运行，无广告、无统计</p>
-<div class="grid">{cards}</div>
+{cards}
 <div class="foot">每款游戏都来自 GitHub 开源项目（已去掉原版的广告和统计代码）：<br>{sources}</div>
 </div></body></html>
 """
+
+
+EXT_REF = re.compile(r"""(?:src|href)\s*=\s*["'](https?:)?//(?!games\.renjia731\.ccwu\.cc)[^"']+|(?:fetch|import)\s*\(\s*["']https?://[^"']+|url\(\s*["']?https?://[^)"']+""", re.I)
+
+
+def build_originals():
+    """Our own games: originals/<slug>/ with meta.json, copied as-is (+ shared originals/common)."""
+    out = []
+    src_root = ROOT / "originals"
+    if not src_root.exists():
+        return out
+    if (src_root / "common").exists():
+        copy_tree(src_root / "common", SITE / "common")
+    for d in sorted(p for p in src_root.iterdir() if p.is_dir() and p.name != "common"):
+        meta_p = d / "meta.json"
+        if not meta_p.exists():
+            print(f"!! originals/{d.name}: no meta.json, skipped")
+            continue
+        meta = json.loads(meta_p.read_text(encoding="utf-8"))
+        slug = meta.get("slug") or d.name
+        dest = SITE / slug
+        if dest.exists():
+            print(f"!! originals/{d.name}: slug {slug} collides with another game, skipped")
+            continue
+        copy_tree(d, dest)
+        ext = []
+        for p in dest.rglob("*"):
+            if p.suffix.lower() in (".html", ".htm", ".js", ".mjs", ".css"):
+                for m in EXT_REF.finditer(p.read_text(encoding="utf-8", errors="replace")):
+                    ext.append(f"{p.relative_to(dest)}: {m.group(0)[:80]}")
+        files = [p for p in dest.rglob("*") if p.is_file()]
+        big = [str(p.relative_to(SITE)) for p in files if p.stat().st_size > 25 * 1024 * 1024]
+        print(json.dumps({"original": slug, "files": len(files), "external_refs": ext[:10], "big": big}, ensure_ascii=False))
+        if big:
+            shutil.rmtree(dest)
+            continue
+        out.append({"slug": slug, "name": meta.get("name", slug), "desc": meta.get("desc", ""), "icon": meta.get("icon", "🎮"),
+                    "upstream": "renjiaandy-art/games-hall", "license": "MIT", "original": True})
+    return out
 
 
 def main():
@@ -408,19 +449,24 @@ def main():
             print(f"!! {g['slug']} FAILED: {e}", flush=True)
             report.append({"slug": g["slug"], "error": str(e)})
             shutil.rmtree(SITE / g["slug"], ignore_errors=True)
+    originals = build_originals()
     if (SITE / "flash" / "index.html").exists():
         ok.append({"slug": "flash", "name": "Flash 播放器", "desc": "打开自己的 .swf 小游戏（Ruffle）", "icon": "⚡",
                    "upstream": "ruffle-rs/ruffle", "license": "MIT/Apache-2.0"})
-    cards = "".join(
-        f'<a class="card" href="{g["slug"]}/{g.get("entry", "")}"><div class="icon">{g["icon"]}</div>'
-        f'<div class="name">{html.escape(g["name"])}</div><div class="desc">{html.escape(g["desc"])}</div></a>'
-        for g in ok)
-    sources = "<br>".join(
+    def card(g):
+        tag = '<span class="tag">原创</span>' if g.get("original") else ""
+        return (f'<a class="card" href="{g["slug"]}/{g.get("entry", "")}"><div class="icon">{g["icon"]}</div>'
+                f'<div class="name">{html.escape(g["name"])}{tag}</div><div class="desc">{html.escape(g["desc"])}</div></a>')
+    cards = ""
+    if originals:
+        cards += '<h2>🎨 原创经典 <small>本站原创代码，玩法致敬经典</small></h2><div class="grid">' + "".join(card(g) for g in originals) + "</div>"
+    cards += '<h2>🌐 开源精选 <small>来自 GitHub 的开源游戏</small></h2><div class="grid">' + "".join(card(g) for g in ok) + "</div>"
+    sources = ("「原创经典」分类的游戏由本站自己编写，代码以 MIT 协议开源：<a href=\"https://github.com/renjiaandy-art/games-hall\" target=\"_blank\" rel=\"noopener\">renjiaandy-art/games-hall</a><br>" if originals else "") + "<br>".join(
         f'{html.escape(g["name"])}：<a href="https://github.com/{g["upstream"]}" target="_blank" rel="noopener">{g["upstream"]}</a>（{g["license"]}）'
         for g in ok)
-    n_games = sum(1 for g in ok if g["slug"] != "flash")
+    n_games = sum(1 for g in ok if g["slug"] != "flash") + len(originals)
     (SITE / "index.html").write_text(HALL.replace("{count}", str(n_games)).replace("{cards}", cards).replace("{sources}", sources), encoding="utf-8")
-    (SITE / "games.json").write_text(json.dumps([{k: g[k] for k in ("slug", "name", "desc", "icon", "upstream", "license")} | {"entry": g.get("entry", "")} for g in ok], ensure_ascii=False, indent=1), encoding="utf-8")
+    (SITE / "games.json").write_text(json.dumps([{k: g[k] for k in ("slug", "name", "desc", "icon", "upstream", "license")} | {"entry": g.get("entry", ""), "original": bool(g.get("original"))} for g in originals + ok], ensure_ascii=False, indent=1), encoding="utf-8")
     total = sum(1 for p in SITE.rglob("*") if p.is_file())
     print("\n==== REPORT ====")
     for r in report:
