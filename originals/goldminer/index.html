@@ -12,12 +12,12 @@
     gem: { r: 8, v: 650, w: 0.3, kind: 'gem' }, bag: { r: 13, v: 0, w: 1, kind: 'bag' },
   };
   let level, score, time, target, items, hook, running, float = [];
-  const view = RJ.canvas(W, H), ctx = view.ctx;
   RJ.init({
     id: 'goldminer', title: '挖金子', icon: '⛏️', subtitle: '把钩子甩准，挖到足够多的金子就过关',
     howto: '• <b>点击屏幕</b> / 空格 / ↓ 放出钩子<br>• 金块越大越值钱但拉得越慢，石头不值钱还很重<br>• 💎 钻石最值钱；❓ 神秘袋金额随机<br>• 每关 60 秒，分数达到目标就进入下一关',
     onStart: () => startLevel(1, 0), onRestart: () => startLevel(1, 0),
   });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
   const pill = RJ.pills(['lv', 'goal', 'score', 'time']);
 
   function place(n, kinds) {

@@ -98,6 +98,7 @@
 
   // letterboxed HiDPI canvas with a fixed logical size
   RJ.canvas = function (W, H) {
+    if (!RJ.stage) throw new Error('RJ.canvas() must be called after RJ.init()');
     const c = $('canvas'); RJ.stage.appendChild(c);
     const ctx = c.getContext('2d');
     const view = { W, H, scale: 1, c, ctx };
