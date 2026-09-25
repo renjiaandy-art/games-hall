@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>弹弓闯关</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  // Simple original 2D physics (circles + axis-aligned boxes, impulse-based, no external library).
+  const W = 360, H = 640, GROUND_Y = 580, G = 980;
+  const ANCHOR = { x: 68, y: 486 };
+  const MAXPULL = 88, MAX_SPEED = 820;
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function tower(x, baseY, defs) {
+    let y = baseY, out = [];
+    for (const d of defs) { y -= d.h / 2; out.push({ x, y, w: d.w, h: d.h, mat: d.mat }); y -= d.h / 2; }
+    return out;
+  }
+
+  const LEVELS = [
+    { name: '哨兵木塔', ammo: 3, blocks: tower(230, GROUND_Y, [{ w: 56, h: 32, mat: 'wood' }, { w: 56, h: 32, mat: 'wood' }]),
+      monsters: [{ x: 230, y: GROUND_Y - 64 - 16, r: 16 }] },
+    { name: '双塔对峙', ammo: 4,
+      blocks: [...tower(160, GROUND_Y, [{ w: 50, h: 30, mat: 'wood' }, { w: 50, h: 30, mat: 'wood' }]),
+               ...tower(300, GROUND_Y, [{ w: 50, h: 30, mat: 'wood' }, { w: 50, h: 30, mat: 'wood' }])],
+      monsters: [{ x: 160, y: GROUND_Y - 60 - 15, r: 15 }, { x: 300, y: GROUND_Y - 60 - 15, r: 15 }] },
+    { name: '木屋顶棚', ammo: 4,
+      blocks: [...tower(150, GROUND_Y, [{ w: 26, h: 70, mat: 'wood' }]), ...tower(290, GROUND_Y, [{ w: 26, h: 70, mat: 'wood' }]),
+               { x: 220, y: GROUND_Y - 70 - 12, w: 170, h: 24, mat: 'wood' }],
+      monsters: [{ x: 220, y: GROUND_Y - 70 - 24 - 16, r: 16 }] },
+    { name: '石塔双守', ammo: 5,
+      blocks: [...tower(260, GROUND_Y, [{ w: 60, h: 34, mat: 'stone' }, { w: 60, h: 34, mat: 'stone' }, { w: 60, h: 34, mat: 'stone' }]),
+               ...tower(130, GROUND_Y, [{ w: 50, h: 30, mat: 'wood' }, { w: 50, h: 30, mat: 'wood' }])],
+      monsters: [{ x: 260, y: GROUND_Y - 102 - 16, r: 16 }, { x: 130, y: GROUND_Y - 60 - 15, r: 15 }] },
+    { name: '三塔连营', ammo: 5,
+      blocks: [...tower(100, GROUND_Y, [{ w: 46, h: 28, mat: 'wood' }]),
+               ...tower(220, GROUND_Y, [{ w: 56, h: 32, mat: 'stone' }, { w: 56, h: 32, mat: 'wood' }]),
+               ...tower(320, GROUND_Y, [{ w: 44, h: 26, mat: 'wood' }, { w: 44, h: 26, mat: 'wood' }])],
+      monsters: [{ x: 100, y: GROUND_Y - 28 - 14, r: 14 }, { x: 220, y: GROUND_Y - 64 - 16, r: 16 }, { x: 320, y: GROUND_Y - 52 - 14, r: 14 }] },
+    { name: '怪物堡垒', ammo: 6,
+      blocks: [...tower(170, GROUND_Y, [{ w: 30, h: 70, mat: 'stone' }]), ...tower(300, GROUND_Y, [{ w: 30, h: 70, mat: 'stone' }]),
+               { x: 235, y: GROUND_Y - 70 - 14, w: 160, h: 28, mat: 'wood' }, ...tower(90, GROUND_Y, [{ w: 40, h: 26, mat: 'wood' }])],
+      monsters: [{ x: 200, y: GROUND_Y - 70 - 28 - 15, r: 15 }, { x: 270, y: GROUND_Y - 70 - 28 - 15, r: 15 },
+                 { x: 90, y: GROUND_Y - 26 - 14, r: 14 }, { x: 335, y: GROUND_Y - 14, r: 14 }] },
+  ];
+
+  RJ.init({
+    id: 'slingshot', title: '弹弓闯关', icon: '🏹', subtitle: '拖拽弹弓，击倒木石结构与怪物',
+    howto: '• 在画面上按住拖拽后松开，即可从弹弓射出弹丸，拉得越远飞得越快、越远<br>' +
+      '• 击倒木块 / 石块结构，命中或砸中怪物即可消灭它们<br>' +
+      '• 每关弹丸数量有限，用尽前消灭全部怪物即可过关，共 6 关，逐关变难',
+    onStart: () => startLevel(0, 0), onRestart: () => startLevel(curLevel || 0, 0),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['lv', 'score', 'ammo']);
+
+  let curLevel, score, running, bodies, particles, ammoRemaining, projectileActive, state, pull, graceTimer;
+
+  function makeBox(x, y, w, h, mat, opt) {
+    const density = mat === 'stone' ? 0.03 : 0.012;
+    return Object.assign({ type: 'box', x, y, vx: 0, vy: 0, angle: 0, va: 0, w, h, mat, mass: w * h * density, restitution: 0.2, static: false, dead: false }, opt);
+  }
+  function makeCircleBody(x, y, r, opt) {
+    return Object.assign({ type: 'circle', x, y, vx: 0, vy: 0, angle: 0, va: 0, r, mass: r * r * 0.05, restitution: 0.3, static: false, dead: false }, opt);
+  }
+
+  function killMonster(m) {
+    if (m.dead) return;
+    m.dead = true; score += 100; RJ.sfx('boom');
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 140;
+      particles.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t: 0, color: '#2f9e82' });
+    }
+  }
+  function maybeKillMonster(m, other, relSpeed) {
+    if (!m.isMonster || m.dead) return;
+    const threshold = other.isProjectile ? 55 : 130;
+    if (relSpeed > threshold) killMonster(m);
+  }
+
+  function groundCollide(b) {
+    const hh = b.type === 'circle' ? b.r : b.h / 2;
+    const bottom = b.y + hh;
+    if (bottom > GROUND_Y) {
+      b.y = GROUND_Y - hh;
+      if (b.vy > 25) b.vy = -b.vy * b.restitution; else b.vy = 0;
+      b.vx *= 0.8; b.va *= 0.82;
+    }
+  }
+  function wallCollide(b) {
+    const hw = b.type === 'circle' ? b.r : b.w / 2;
+    if (b.x - hw < 0) { b.x = hw; b.vx = -b.vx * 0.4; }
+    if (b.x + hw > W) { b.x = W - hw; b.vx = -b.vx * 0.4; }
+  }
+
+  function resolveCircleCircle(a, b) {
+    let dx = b.x - a.x, dy = b.y - a.y, dist = Math.hypot(dx, dy) || 0.01;
+    const minDist = a.r + b.r; if (dist >= minDist) return;
+    const nx = dx / dist, ny = dy / dist, overlap = minDist - dist;
+    const invA = a.static ? 0 : 1 / a.mass, invB = b.static ? 0 : 1 / b.mass, totalInv = invA + invB || 1;
+    if (!a.static) { a.x -= nx * overlap * (invA / totalInv); a.y -= ny * overlap * (invA / totalInv); }
+    if (!b.static) { b.x += nx * overlap * (invB / totalInv); b.y += ny * overlap * (invB / totalInv); }
+    const rvx = b.vx - a.vx, rvy = b.vy - a.vy, velAlong = rvx * nx + rvy * ny;
+    maybeKillMonster(a, b, Math.abs(velAlong)); maybeKillMonster(b, a, Math.abs(velAlong));
+    if (velAlong > 0) return;
+    const rest = Math.max(a.restitution, b.restitution), j = -(1 + rest) * velAlong / totalInv;
+    if (!a.static) { a.vx -= j * nx * invA; a.vy -= j * ny * invA; }
+    if (!b.static) { b.vx += j * nx * invB; b.vy += j * ny * invB; }
+  }
+  function resolveCircleBox(c, box) {
+    const hw = box.w / 2, hh = box.h / 2;
+    const lx = clamp(c.x, box.x - hw, box.x + hw), ly = clamp(c.y, box.y - hh, box.y + hh);
+    let dx = c.x - lx, dy = c.y - ly, dist = Math.hypot(dx, dy), nx, ny;
+    if (dist < 0.001) {
+      const dxE = hw - Math.abs(c.x - box.x), dyE = hh - Math.abs(c.y - box.y);
+      if (dxE < dyE) { nx = c.x < box.x ? -1 : 1; ny = 0; } else { nx = 0; ny = c.y < box.y ? -1 : 1; }
+      dist = 0;
+    } else { nx = dx / dist; ny = dy / dist; }
+    if (dist >= c.r) return;
+    const overlap = c.r - dist;
+    const invC = c.static ? 0 : 1 / c.mass, invB = box.static ? 0 : 1 / box.mass, totalInv = invC + invB || 1;
+    // normal points from box to circle (box plays the "a" role, circle the "b" role)
+    if (!box.static) { box.x -= nx * overlap * (invB / totalInv); box.y -= ny * overlap * (invB / totalInv); }
+    if (!c.static) { c.x += nx * overlap * (invC / totalInv); c.y += ny * overlap * (invC / totalInv); }
+    const rvx = c.vx - box.vx, rvy = c.vy - box.vy, velAlong = rvx * nx + rvy * ny;
+    maybeKillMonster(c, box, Math.abs(velAlong));
+    if (velAlong > 0) return;
+    const rest = Math.max(c.restitution, box.restitution), j = -(1 + rest) * velAlong / totalInv;
+    if (!box.static) {
+      box.vx -= j * nx * invB; box.vy -= j * ny * invB;
+      const off = (lx - box.x) / (hw || 1);
+      box.va = clamp(box.va + off * Math.abs(j) * 0.015, -6, 6);
+    }
+    if (!c.static) { c.vx += j * nx * invC; c.vy += j * ny * invC; }
+  }
+  function resolveBoxBox(a, b) {
+    const overlapX = (a.w / 2 + b.w / 2) - Math.abs(a.x - b.x), overlapY = (a.h / 2 + b.h / 2) - Math.abs(a.y - b.y);
+    if (overlapX <= 0 || overlapY <= 0) return;
+    const invA = a.static ? 0 : 1 / a.mass, invB = b.static ? 0 : 1 / b.mass, totalInv = invA + invB || 1;
+    if (overlapX < overlapY) {
+      const nx = a.x < b.x ? -1 : 1;
+      if (!a.static) a.x += nx * overlapX * (invA / totalInv);
+      if (!b.static) b.x -= nx * overlapX * (invB / totalInv);
+      const velAlong = (b.vx - a.vx) * -nx;
+      if (velAlong < 0) { const j = -(1 + 0.15) * velAlong / totalInv; if (!a.static) a.vx -= j * -nx * invA; if (!b.static) b.vx += j * -nx * invB; }
+    } else {
+      const ny = a.y < b.y ? -1 : 1;
+      if (!a.static) a.y += ny * overlapY * (invA / totalInv);
+      if (!b.static) b.y -= ny * overlapY * (invB / totalInv);
+      const velAlong = (b.vy - a.vy) * -ny;
+      if (velAlong < 0) { const j = -(1 + 0.06) * velAlong / totalInv; if (!a.static) a.vy -= j * -ny * invA; if (!b.static) b.vy += j * -ny * invB; }
+    }
+  }
+  function resolvePair(a, b) {
+    if (a.dead || b.dead) return;
+    if (a.type === 'circle' && b.type === 'circle') resolveCircleCircle(a, b);
+    else if (a.type === 'circle' && b.type === 'box') resolveCircleBox(a, b);
+    else if (a.type === 'box' && b.type === 'circle') resolveCircleBox(b, a);
+    else resolveBoxBox(a, b);
+  }
+
+  function physicsStep(dt) {
+    for (const b of bodies) { if (b.static || b.dead) continue; b.vy += G * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.angle += b.va * dt; b.va *= 0.985; }
+    for (const b of bodies) { if (b.static || b.dead) continue; groundCollide(b); wallCollide(b); }
+    for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
+      const a = bodies[i], b = bodies[j]; if (a.static && b.static) continue; resolvePair(a, b);
+    }
+    for (const b of bodies) { if (b.static || b.dead) continue; groundCollide(b); wallCollide(b); }
+  }
+
+  function monstersAlive() { return bodies.filter((b) => b.isMonster && !b.dead).length; }
+
+  function startLevel(lv, sc) {
+    if (lv >= LEVELS.length) lv = LEVELS.length - 1;
+    curLevel = lv; const L = LEVELS[lv]; score = sc; running = true;
+    bodies = []; particles = [];
+    for (const b of L.blocks) bodies.push(makeBox(b.x, b.y, b.w, b.h, b.mat, {}));
+    for (const m of L.monsters) bodies.push(makeCircleBody(m.x, m.y, m.r, { mass: m.r * m.r * 0.05, restitution: 0.25, isMonster: true }));
+    ammoRemaining = L.ammo; projectileActive = false; state = 'ready'; pull = null; graceTimer = null;
+    RJ.toast(`第 ${lv + 1} 关 · ${L.name}`, 1300);
+  }
+
+  function clampPull(p) {
+    let dx = p.x - ANCHOR.x, dy = p.y - ANCHOR.y, dist = Math.hypot(dx, dy);
+    if (dist > MAXPULL) { const k = MAXPULL / dist; dx *= k; dy *= k; }
+    return { x: ANCHOR.x + dx, y: ANCHOR.y + dy };
+  }
+  function launch(dx, dy, dist) {
+    const power = Math.min(dist, MAXPULL) / MAXPULL, speed = power * MAX_SPEED;
+    const nx = dx / dist, ny = dy / dist;
+    bodies.push(makeCircleBody(ANCHOR.x, ANCHOR.y, 10, { vx: nx * speed, vy: ny * speed, mass: 1.6, restitution: 0.35, isProjectile: true }));
+    ammoRemaining--; projectileActive = true; state = 'flight'; RJ.sfx('shoot');
+  }
+
+  view.onPointer(
+    (p) => { if (running && !projectileActive && state === 'ready') { state = 'aiming'; pull = clampPull(p); } },
+    (p) => { if (state === 'aiming') pull = clampPull(p); },
+    (p) => {
+      if (state !== 'aiming') return;
+      const dx = ANCHOR.x - pull.x, dy = ANCHOR.y - pull.y, dist = Math.hypot(dx, dy);
+      if (dist > 14) launch(dx, dy, dist);
+      state = 'ready'; pull = null;
+    },
+  );
+
+  function update(dt) {
+    particles = particles.filter((p) => { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; return p.t < 0.6; });
+    if (!running) return;
+    physicsStep(dt / 2); physicsStep(dt / 2);
+    const proj = bodies.find((b) => b.isProjectile && !b.dead);
+    if (proj) {
+      if (Math.abs(proj.vx) + Math.abs(proj.vy) < 14) { proj.restTimer = (proj.restTimer || 0) + dt; if (proj.restTimer > 0.45) { proj.dead = true; projectileActive = false; } }
+      else proj.restTimer = 0;
+      if (proj.y > H + 150 || proj.x < -100 || proj.x > W + 100) { proj.dead = true; projectileActive = false; }
+    }
+    if (monstersAlive() === 0) {
+      running = false;
+      RJ.over({ title: '过关！', sub: `第 ${curLevel + 1} 关 · ${LEVELS[curLevel].name}`, score, win: true,
+        next: curLevel + 1 < LEVELS.length ? () => startLevel(curLevel + 1, score) : null });
+      return;
+    }
+    if (!projectileActive && ammoRemaining <= 0) {
+      if (graceTimer === null) graceTimer = 1.0;
+      else { graceTimer -= dt; if (graceTimer <= 0) { running = false; RJ.over({ title: '弹丸用尽', sub: `第 ${curLevel + 1} 关 · ${LEVELS[curLevel].name}`, score }); return; } }
+    } else graceTimer = null;
+  }
+
+  function pollKeys() {
+    if (state === 'ready' && running && !projectileActive) {
+      if (RJ.keys['ArrowLeft'] || RJ.keys['ArrowRight'] || RJ.keys[' ']) {
+        if (!pull) pull = { x: ANCHOR.x - 60, y: ANCHOR.y + 10 };
+        if (RJ.keys['ArrowLeft']) pull.y = clamp(pull.y - 2, ANCHOR.y - MAXPULL, ANCHOR.y + MAXPULL);
+        if (RJ.keys['ArrowRight']) pull.y = clamp(pull.y + 2, ANCHOR.y - MAXPULL, ANCHOR.y + MAXPULL);
+        pull = clampPull(pull);
+        if (RJ.keys[' '] && !spaceLatch) {
+          const dx = ANCHOR.x - pull.x, dy = ANCHOR.y - pull.y, dist = Math.hypot(dx, dy);
+          if (dist > 14) launch(dx, dy, dist);
+          pull = null;
+        }
+      }
+    }
+    spaceLatch = RJ.keys[' '];
+  }
+  let spaceLatch = false;
+
+  function drawBall(x, y, r, c1, c2) {
+    const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.35, r * 0.15, x, y, r);
+    g.addColorStop(0, c1); g.addColorStop(1, c2);
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  function drawBlock(b) {
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.angle);
+    ctx.fillStyle = b.mat === 'wood' ? '#a9713d' : '#9aa0ab';
+    RJ.rr(ctx, -b.w / 2, -b.h / 2, b.w, b.h, 4); ctx.fill();
+    ctx.strokeStyle = b.mat === 'wood' ? 'rgba(60,30,10,.45)' : 'rgba(40,40,50,.45)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = b.mat === 'wood' ? 'rgba(60,30,10,.3)' : 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-b.w / 2 + 5, 0); ctx.lineTo(b.w / 2 - 5, 0); ctx.stroke();
+    ctx.restore();
+  }
+  function drawMonster(m) {
+    if (m.dead) return;
+    ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(m.angle * 0.25);
+    const g = ctx.createRadialGradient(-m.r * 0.3, -m.r * 0.3, m.r * 0.2, 0, 0, m.r);
+    g.addColorStop(0, '#8fe0c8'); g.addColorStop(1, '#2f9e82');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, m.r, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(20,60,50,.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-m.r * 0.32, -m.r * 0.1, m.r * 0.28, 0, 7); ctx.arc(m.r * 0.32, -m.r * 0.1, m.r * 0.28, 0, 7); ctx.fill();
+    ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(-m.r * 0.32, -m.r * 0.05, m.r * 0.13, 0, 7); ctx.arc(m.r * 0.32, -m.r * 0.05, m.r * 0.13, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#1a5c48'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, m.r * 0.25, m.r * 0.35, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+  function drawSling(pouch) {
+    const base = { x: ANCHOR.x, y: GROUND_Y }, tipL = { x: ANCHOR.x - 18, y: ANCHOR.y - 6 }, tipR = { x: ANCHOR.x + 18, y: ANCHOR.y - 6 };
+    if (pouch) {
+      ctx.strokeStyle = '#4a3420'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(tipL.x, tipL.y); ctx.lineTo(pouch.x, pouch.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tipR.x, tipR.y); ctx.lineTo(pouch.x, pouch.y); ctx.stroke();
+    }
+    ctx.strokeStyle = '#6b4423'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(tipL.x, tipL.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(tipR.x, tipR.y); ctx.stroke();
+  }
+  function predictTrajectory(vx, vy) {
+    const pts = []; let x = ANCHOR.x, y = ANCHOR.y, tvx = vx, tvy = vy;
+    for (let i = 0; i < 26; i++) { tvy += G * 0.045; x += tvx * 0.045; y += tvy * 0.045; if (y > GROUND_Y || x > W || x < 0) break; pts.push({ x, y }); }
+    return pts;
+  }
+
+  function draw() {
+    const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    sky.addColorStop(0, '#2b4a7a'); sky.addColorStop(1, '#5f87b8');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, GROUND_Y);
+    ctx.fillStyle = '#3d6b3a'; ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+    ctx.fillStyle = '#345c31'; ctx.fillRect(0, GROUND_Y, W, 6);
+
+    for (const b of bodies) if (b.type === 'box') drawBlock(b);
+    for (const b of bodies) if (b.isMonster) drawMonster(b);
+    const proj = bodies.find((b) => b.isProjectile && !b.dead);
+
+    const pouch = state === 'aiming' ? pull : (proj ? null : ANCHOR);
+    drawSling(pouch);
+    if (state === 'aiming' && pull) {
+      const dx = ANCHOR.x - pull.x, dy = ANCHOR.y - pull.y, dist = Math.hypot(dx, dy) || 1;
+      const power = Math.min(dist, MAXPULL) / MAXPULL;
+      const pts = predictTrajectory((dx / dist) * power * MAX_SPEED, (dy / dist) * power * MAX_SPEED);
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      for (let i = 0; i < pts.length; i += 2) { ctx.beginPath(); ctx.arc(pts[i].x, pts[i].y, 2.5, 0, 7); ctx.fill(); }
+      drawBall(pull.x, pull.y, 10, '#f0ad4e', '#a5690f');
+    } else if (!proj && state === 'ready') {
+      drawBall(ANCHOR.x, ANCHOR.y, 10, '#f0ad4e', '#a5690f');
+    }
+    if (proj) drawBall(proj.x, proj.y, 10, '#f0ad4e', '#a5690f');
+
+    for (const p of particles) { ctx.globalAlpha = Math.max(0, 1 - p.t / 0.6); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
+
+    pill('lv', `第${(curLevel ?? 0) + 1}关`); pill('score', `分数 ${score || 0}`);
+    pill('ammo', `弹丸 ${Math.max(0, ammoRemaining)} · 怪 ${monstersAlive()}`);
+  }
+
+  RJ.loop((dt) => { pollKeys(); update(dt); }, draw);
+
+  curLevel = 0; score = 0; running = false; bodies = []; particles = [];
+  for (const b of LEVELS[0].blocks) bodies.push(makeBox(b.x, b.y, b.w, b.h, b.mat, {}));
+  for (const m of LEVELS[0].monsters) bodies.push(makeCircleBody(m.x, m.y, m.r, { mass: m.r * m.r * 0.05, restitution: 0.25, isMonster: true }));
+  ammoRemaining = LEVELS[0].ammo; projectileActive = false; state = 'ready'; pull = null; graceTimer = null;
+})();
+</script></body></html>
