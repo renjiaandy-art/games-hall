@@ -244,7 +244,8 @@ FLASH_PLAYER = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Flash 播放器</title>
 <style>
-body{margin:0;min-height:100vh;color:#fff;font-family:-apple-system,"PingFang SC",sans-serif;background:linear-gradient(160deg,#2a1a5e,#1a2a6e) fixed}
+html{background:#1b1f3a}
+body{margin:0;min-height:100vh;color:#fff;font-family:-apple-system,"PingFang SC",sans-serif;background:linear-gradient(160deg,#2a1a5e,#1a2a6e)}
 .wrap{max-width:900px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 16px) 16px 30px}
 a{color:#fff} h1{font-size:24px;margin:10px 0 4px} p{opacity:.8;font-size:14px;line-height:1.6}
 .card{margin:14px 0;padding:14px;border-radius:18px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);

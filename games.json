@@ -381,33 +381,6 @@
   "kind": "flash"
  },
  {
-  "slug": "5b",
-  "name": "BFDIA 5b",
-  "desc": "carykh 的 Flash 解谜平台跳跃",
-  "icon": "🟨",
-  "repo": "5b",
-  "ref": "main",
-  "dir": ".",
-  "include": [
-   "5b.swf"
-  ],
-  "swf": "5b.swf",
-  "patch": [
-   "flash",
-   "dpad"
-  ],
-  "dpad_extra": [
-   [
-    "空格",
-    " ",
-    32
-   ]
-  ],
-  "license": "GPL-3.0",
-  "upstream": "carykh/5b",
-  "kind": "flash"
- },
- {
   "slug": "asteroids",
   "name": "小行星",
   "desc": "Flash 经典 Asteroids 太空射击",
