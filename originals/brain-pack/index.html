@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>益智合集</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 360, H = 640;
+
+  RJ.init({
+    id: 'brain-pack', title: '益智合集', icon: '🧠', subtitle: '24点 + 汉诺塔，两款小游戏随心切换',
+    howto: '• 【24点】发 4 张牌，依次点两张牌再点一个运算符把它们合并成一个新数字，反复合并到只剩一张牌，结果是 24 即算过关；限时挑战，可点「看答案」查看解法<br>' +
+      '• 【汉诺塔】选择 3-8 层圆盘，点击或拖拽把圆盘从一根柱子移到另一根，不能把大盘压在小盘上，把全部圆盘移到最右边即可通关；可点「自动演示」观看最优解法',
+    onStart: () => gotoMenu(), onRestart: () => gotoMenu(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const setPill = RJ.pills(['m1', 'm2']);
+  const btnMenu = RJ.hudButton('🏠 菜单', () => gotoMenu());
+  const btnHint = RJ.hudButton('🔍 答案', () => show24Answer());
+  const btnDemo = RJ.hudButton('▶ 演示', () => startHanoiDemo());
+  const btnRedo = RJ.hudButton('↺ 重来', () => redo());
+  [btnMenu, btnHint, btnDemo, btnRedo].forEach((b) => { b.style.whiteSpace = 'nowrap'; b.style.padding = '5px 7px'; b.style.fontSize = '12px'; });
+  btnMenu.style.display = btnHint.style.display = btnDemo.style.display = btnRedo.style.display = 'none';
+
+  const store = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+
+  let mode = 'menu'; // menu | 24 | hanoi-setup | hanoi
+  let regions = []; // clickable regions for current frame: {x,y,w,h,fn}
+
+  function setButtons() {
+    btnMenu.style.display = mode === 'menu' ? 'none' : 'inline-block';
+    btnHint.style.display = mode === '24' ? 'inline-block' : 'none';
+    btnDemo.style.display = mode === 'hanoi' ? 'inline-block' : 'none';
+    btnRedo.style.display = (mode === '24' || mode === 'hanoi') ? 'inline-block' : 'none';
+  }
+
+  function gotoMenu() { mode = 'menu'; setButtons(); }
+  function redo() { if (mode === '24') restart24(); else if (mode === 'hanoi') resetHanoiBoard(); }
+
+  // ---------------- 24-point ----------------
+  const OPS = ['+', '-', '×', '÷'];
+  function gcd(a, b) { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b]; } return a || 1; }
+  function mkFrac(n, d) { if (d < 0) { n = -n; d = -d; } const g = gcd(n, d); return [n / g, d / g]; }
+  function fracEq(f, v) { return f[0] === v * f[1]; }
+  function fracStr(f) { return f[1] === 1 ? String(f[0]) : `${f[0]}/${f[1]}`; }
+  function applyOp(a, b, op) {
+    const [an, ad] = a, [bn, bd] = b;
+    if (op === '+') return mkFrac(an * bd + bn * ad, ad * bd);
+    if (op === '-') return mkFrac(an * bd - bn * ad, ad * bd);
+    if (op === '×') return mkFrac(an * bn, ad * bd);
+    if (op === '÷') { if (bn === 0) return null; return mkFrac(an * bd, ad * bn); }
+  }
+  function solve24(items) {
+    if (items.length === 1) return fracEq(items[0].val, 24) ? [items[0].expr] : null;
+    for (let i = 0; i < items.length; i++) for (let j = 0; j < items.length; j++) {
+      if (i === j) continue;
+      const rest = items.filter((_, k) => k !== i && k !== j);
+      for (const op of OPS) {
+        const v = applyOp(items[i].val, items[j].val, op);
+        if (!v) continue;
+        const expr = `(${items[i].expr}${op}${items[j].expr})`;
+        const found = solve24([...rest, { val: v, expr }]);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  function faceOf(v) { return v === 1 ? 'A' : v === 11 ? 'J' : v === 12 ? 'Q' : v === 13 ? 'K' : String(v); }
+  function draw4() {
+    for (let tries = 0; tries < 500; tries++) {
+      const vals = [1, 2, 3, 4].map(() => RJ.randi(1, 13));
+      const items = vals.map((v) => ({ val: [v, 1], expr: faceOf(v) }));
+      if (solve24(items.map((x) => ({ val: x.val, expr: x.expr })))) return vals;
+    }
+    return [1, 3, 4, 6]; // solvable fallback: 6÷(1-3÷4)=24
+  }
+
+  let tp = {}; // 24-point state
+  function newHand() {
+    const vals = draw4();
+    tp.cards = vals.map((v, i) => ({ id: i, val: [v, 1], expr: faceOf(v) }));
+    tp.cards0 = tp.cards.map((c) => ({ val: c.val, expr: c.expr }));
+    tp.sel = [];
+    tp.revealed = false;
+    tp.answer = null;
+  }
+  function restart24() {
+    tp.score = 0; tp.hands = 0; tp.timeLimit = 120; tp.timeLeft = tp.timeLimit; tp.running = true;
+    newHand();
+  }
+  function combine24(op) {
+    const [ia, ib] = tp.sel;
+    const a = tp.cards[ia], b = tp.cards[ib];
+    const v = applyOp(a.val, b.val, op);
+    if (!v) { RJ.toast('不能除以 0'); tp.sel = []; return; }
+    const merged = { id: a.id, val: v, expr: `(${a.expr}${op}${b.expr})` };
+    tp.cards = tp.cards.filter((c) => c !== a && c !== b);
+    tp.cards.push(merged);
+    tp.sel = [];
+    RJ.sfx('hit');
+    if (tp.cards.length === 1) {
+      if (fracEq(tp.cards[0].val, 24)) {
+        tp.score += 10 + Math.max(0, Math.round(tp.timeLeft / 3));
+        tp.hands++;
+        RJ.sfx('pop'); RJ.toast('算出 24！+分', 1000);
+        newHand();
+      } else {
+        RJ.toast(`结果是 ${fracStr(tp.cards[0].val)}，再试试`, 1300);
+      }
+    }
+  }
+  function show24Answer() {
+    if (mode !== '24' || tp.revealed) return;
+    const items = tp.cards0.map((c) => ({ val: c.val, expr: c.expr }));
+    const sol = solve24(items);
+    tp.revealed = true;
+    tp.answer = sol ? sol[0].replace(/^\((.*)\)$/, '$1') + ' = 24' : '本手无解';
+    RJ.toast(tp.answer, 3200);
+    setTimeout(() => { if (mode === '24') newHand(); }, 1600);
+  }
+  function start24() {
+    mode = '24'; setButtons();
+    restart24();
+  }
+  function draw24() {
+    const frac = tp.timeLimit ? Math.max(0, tp.timeLeft / tp.timeLimit) : 0;
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; RJ.rr(ctx, 30, 92, W - 60, 10, 5); ctx.fill();
+    ctx.fillStyle = frac < 0.25 ? '#e0524a' : (frac < 0.5 ? '#f0ad4e' : '#5cc75c');
+    RJ.rr(ctx, 30, 92, (W - 60) * frac, 10, 5); ctx.fill();
+
+    regions = [];
+    const n = tp.cards.length;
+    const cw = 76, ch = 100, gap = 14;
+    const cols = Math.min(n, 4);
+    const totalW = cols * cw + (cols - 1) * gap;
+    const startX = (W - totalW) / 2;
+    const y = 180;
+    tp.cards.forEach((c, i) => {
+      const x = startX + i * (cw + gap);
+      const isSel = tp.sel.includes(i);
+      ctx.fillStyle = isSel ? '#3aa0ff' : '#232847';
+      RJ.rr(ctx, x, y, cw, ch, 12); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '700 26px sans-serif';
+      ctx.fillText(fracStr(c.val), x + cw / 2, y + ch / 2);
+      regions.push({ x, y, w: cw, h: ch, fn: () => {
+        const idx = tp.sel.indexOf(i);
+        if (idx >= 0) { tp.sel.splice(idx, 1); return; }
+        if (tp.sel.length >= 2) return;
+        tp.sel.push(i);
+      } });
+    });
+
+    // operator row
+    const oy = 340, ow = 62, oh = 56, ogap = 14;
+    const ototal = 4 * ow + 3 * ogap;
+    const ox0 = (W - ototal) / 2;
+    OPS.forEach((op, i) => {
+      const x = ox0 + i * (ow + ogap);
+      const active = tp.sel.length === 2;
+      ctx.fillStyle = active ? '#0a6cff' : 'rgba(255,255,255,.1)';
+      RJ.rr(ctx, x, oy, ow, oh, 10); ctx.fill();
+      ctx.fillStyle = active ? '#fff' : 'rgba(255,255,255,.4)';
+      ctx.font = '700 24px sans-serif'; ctx.fillText(op, x + ow / 2, oy + oh / 2 + 1);
+      if (active) regions.push({ x, y: oy, w: ow, h: oh, fn: () => combine24(op) });
+    });
+
+    ctx.fillStyle = 'rgba(255,255,255,.65)'; ctx.font = '13px sans-serif';
+    ctx.fillText('点两张牌，再点运算符合并，合到剩一张=24即过关', W / 2, 430);
+
+    setPill('m1', `分数 ${tp.score}`); setPill('m2', `⏱ ${Math.ceil(Math.max(0, tp.timeLeft))}s`);
+  }
+
+  // ---------------- Hanoi ----------------
+  const PEG_X = [W * 0.2, W * 0.5, W * 0.8];
+  const BASE_Y = 560;
+  let hz = {};
+  function hanoiSetup() { mode = 'hanoi-setup'; setButtons(); }
+  function startHanoi(n) {
+    hz.n = n; store.set('bp-hanoi-n', n);
+    mode = 'hanoi'; setButtons();
+    resetHanoiBoard();
+  }
+  function resetHanoiBoard() {
+    hz.pegs = [Array.from({ length: hz.n }, (_, i) => hz.n - i), [], []];
+    hz.steps = 0; hz.sel = null; hz.dragging = false; hz.dragPos = null; hz.startPos = null;
+    hz.demo = false; hz.demoQueue = null; hz.demoTimer = 0;
+    hz.won = false; hz.t0 = performance.now();
+  }
+  function pegAtX(x) {
+    let best = 0, bd = Infinity;
+    PEG_X.forEach((px, i) => { const d = Math.abs(px - x); if (d < bd) { bd = d; best = i; } });
+    return best;
+  }
+  function tryMove(from, to) {
+    if (from === to) return false;
+    const a = hz.pegs[from]; if (!a.length) return false;
+    const disk = a[a.length - 1];
+    const b = hz.pegs[to];
+    if (b.length && b[b.length - 1] < disk) { RJ.sfx('bad'); RJ.toast('不能把大盘放在小盘上', 900); return false; }
+    a.pop(); b.push(disk); hz.steps++; RJ.sfx('move');
+    if (hz.pegs[2].length === hz.n) {
+      hz.won = true;
+      const t = ((performance.now() - hz.t0) / 1000).toFixed(1);
+      if (!hz.demo) {
+        const bk = 'bp-hanoi-best-' + hz.n;
+        const best = +store.get(bk, 0);
+        if (!best || hz.steps < best) store.set(bk, hz.steps);
+        RJ.sfx('win');
+      }
+      hz.wonInfo = { steps: hz.steps, time: t, min: (2 ** hz.n - 1), best: +store.get('bp-hanoi-best-' + hz.n, 0) };
+    }
+    return true;
+  }
+  function hanoiSolveMoves(n, from, to, via, out) {
+    if (n === 0) return;
+    hanoiSolveMoves(n - 1, from, via, to, out);
+    out.push([from, to]);
+    hanoiSolveMoves(n - 1, via, to, from, out);
+  }
+  function startHanoiDemo() {
+    if (mode !== 'hanoi') return;
+    resetHanoiBoard();
+    hz.demo = true;
+    hz.demoQueue = []; hanoiSolveMoves(hz.n, 0, 2, 1, hz.demoQueue);
+    hz.demoTimer = 0;
+  }
+  function drawHanoi() {
+    regions = [];
+    // pegs
+    const maxW = 96;
+    PEG_X.forEach((px) => {
+      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      ctx.fillRect(px - 3, BASE_Y - (hz.n + 1) * 22, 6, (hz.n + 1) * 22);
+    });
+    ctx.fillStyle = 'rgba(255,255,255,.3)';
+    RJ.rr(ctx, PEG_X[0] - maxW / 2 - 10, BASE_Y, PEG_X[2] - PEG_X[0] + maxW + 20, 10, 5); ctx.fill();
+
+    const colors = ['#e0524a', '#f0ad4e', '#e8d24a', '#5cc75c', '#3aa0ff', '#8a6cff', '#ff6cc7', '#4ae0d2'];
+    hz.pegs.forEach((peg, pi) => {
+      peg.forEach((disk, level) => {
+        if (hz.liftedFrom === pi && level === peg.length - 1 && hz.dragging) return; // drawn separately while dragged
+        const w = 24 + disk * (maxW - 24) / hz.n;
+        const x = PEG_X[pi] - w / 2, y = BASE_Y - (level + 1) * 22;
+        ctx.fillStyle = colors[(disk - 1) % colors.length];
+        RJ.rr(ctx, x, y, w, 18, 6); ctx.fill();
+      });
+    });
+    // lifted disk following pointer
+    if (hz.dragging && hz.liftedDisk) {
+      const w = 24 + hz.liftedDisk * (maxW - 24) / hz.n;
+      const x = hz.dragPos.x - w / 2, y = hz.dragPos.y - 9;
+      ctx.fillStyle = colors[(hz.liftedDisk - 1) % colors.length];
+      RJ.rr(ctx, x, y, w, 18, 6); ctx.fill();
+    }
+    // selection highlight (tap mode, not dragging)
+    if (hz.sel != null && !hz.dragging) {
+      const px = PEG_X[hz.sel];
+      ctx.strokeStyle = '#3aa0ff'; ctx.lineWidth = 3;
+      ctx.strokeRect(px - maxW / 2 - 8, BASE_Y - (hz.n + 1) * 22 - 6, maxW + 16, (hz.n + 1) * 22 + 16);
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(hz.demo ? '自动演示中…' : '点击或拖拽圆盘，把整摞移到最右边', W / 2, 610);
+
+    if (hz.won && hz.wonInfo) {
+      ctx.fillStyle = 'rgba(10,12,30,.72)'; ctx.fillRect(0, 0, W, H);
+      const cx = W / 2, cy = H / 2 - 20;
+      ctx.fillStyle = 'rgba(255,255,255,.14)';
+      RJ.rr(ctx, cx - 140, cy - 110, 280, 220, 20); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = '700 24px sans-serif';
+      ctx.fillText(hz.demo ? '演示完成' : '通关！', cx, cy - 60);
+      ctx.font = '15px sans-serif';
+      ctx.fillText(`步数：${hz.wonInfo.steps}　最少：${hz.wonInfo.min}`, cx, cy - 24);
+      ctx.fillText(`用时：${hz.wonInfo.time}s`, cx, cy);
+      if (!hz.demo) ctx.fillText(`历史最佳：${hz.wonInfo.best}`, cx, cy + 22);
+      const by = cy + 50, bw = 220, bh = 42;
+      ctx.fillStyle = '#0a6cff'; RJ.rr(ctx, cx - bw / 2, by, bw, bh, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = '700 16px sans-serif'; ctx.fillText('再玩一次', cx, by + bh / 2 + 1);
+      regions.push({ x: cx - bw / 2, y: by, w: bw, h: bh, fn: () => resetHanoiBoard() });
+      const by2 = by + bh + 12;
+      ctx.fillStyle = 'rgba(255,255,255,.18)'; RJ.rr(ctx, cx - bw / 2, by2, bw, bh, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillText('换层数', cx, by2 + bh / 2 + 1);
+      regions.push({ x: cx - bw / 2, y: by2, w: bw, h: bh, fn: () => hanoiSetup() });
+    }
+
+    setPill('m1', `步数 ${hz.steps}`); setPill('m2', `最少 ${2 ** hz.n - 1}`);
+  }
+
+  function hanoiPointerDown(p) {
+    if (hz.won || hz.demo) return;
+    const pi = pegAtX(p.x);
+    if (hz.sel != null && hz.sel !== pi) { tryMove(hz.sel, pi); hz.sel = null; return; }
+    if (hz.sel === pi) { hz.sel = null; return; }
+    if (!hz.pegs[pi].length) return;
+    hz.liftedFrom = pi; hz.liftedDisk = hz.pegs[pi][hz.pegs[pi].length - 1];
+    hz.startPos = p; hz.dragPos = p; hz.dragging = false;
+  }
+  function hanoiPointerMove(p) {
+    if (hz.liftedFrom == null || hz.won || hz.demo) return;
+    hz.dragPos = p;
+    if (!hz.dragging && Math.hypot(p.x - hz.startPos.x, p.y - hz.startPos.y) > 10) hz.dragging = true;
+  }
+  function hanoiPointerUp(p) {
+    if (hz.liftedFrom == null || hz.won || hz.demo) return;
+    if (hz.dragging) { tryMove(hz.liftedFrom, pegAtX(p.x)); }
+    else { hz.sel = hz.liftedFrom; }
+    hz.liftedFrom = null; hz.dragging = false;
+  }
+
+  // ---------------- Menu ----------------
+  function drawMenu() {
+    regions = [];
+    ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = '15px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('选择一款小游戏', W / 2, 140);
+    const cards = [
+      { icon: '🃏', title: '24 点', sub: '看牌算 24，限时计分', fn: start24 },
+      { icon: '🗼', title: '汉诺塔', sub: '移盘挑战，最少步数', fn: hanoiSetup },
+    ];
+    const cw = 260, ch = 140, gap = 26;
+    const totalH = cards.length * ch + (cards.length - 1) * gap;
+    let y = (H - totalH) / 2 + 20;
+    cards.forEach((c) => {
+      const x = (W - cw) / 2;
+      ctx.fillStyle = 'rgba(255,255,255,.12)'; RJ.rr(ctx, x, y, cw, ch, 20); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = '40px sans-serif'; ctx.fillText(c.icon, W / 2, y + 52);
+      ctx.font = '700 20px sans-serif'; ctx.fillText(c.title, W / 2, y + 90);
+      ctx.font = '13px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillText(c.sub, W / 2, y + 114);
+      regions.push({ x, y, w: cw, h: ch, fn: c.fn });
+      y += ch + gap;
+    });
+  }
+
+  function drawHanoiSetup() {
+    regions = [];
+    ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = '17px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('选择层数（3-8）', W / 2, 200);
+    const n0 = +store.get('bp-hanoi-n', 4);
+    const size = 52, gap = 12, cols = 3;
+    const vals = [3, 4, 5, 6, 7, 8];
+    const totalW = cols * size + (cols - 1) * gap;
+    const startX = (W - totalW) / 2, startY = 240;
+    vals.forEach((v, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      const x = startX + col * (size + gap), y = startY + row * (size + gap);
+      ctx.fillStyle = v === (hz.pickN || n0) ? '#0a6cff' : 'rgba(255,255,255,.14)';
+      RJ.rr(ctx, x, y, size, size, 12); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = '700 20px sans-serif'; ctx.fillText(v, x + size / 2, y + size / 2 + 1);
+      regions.push({ x, y, w: size, h: size, fn: () => { hz.pickN = v; } });
+    });
+    const best = +store.get('bp-hanoi-best-' + (hz.pickN || n0), 0);
+    ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = '13px sans-serif';
+    ctx.fillText(best ? `该层数历史最佳步数：${best}` : '该层数暂无记录', W / 2, startY + 2 * (size + gap) + 24);
+    const by = startY + 2 * (size + gap) + 46, bw = 200, bh = 46;
+    ctx.fillStyle = '#0a6cff'; RJ.rr(ctx, W / 2 - bw / 2, by, bw, bh, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '700 17px sans-serif'; ctx.fillText('开始', W / 2, by + bh / 2 + 1);
+    regions.push({ x: W / 2 - bw / 2, y: by, w: bw, h: bh, fn: () => startHanoi(hz.pickN || n0) });
+  }
+
+  view.onPointer(
+    (p) => { if (mode === 'hanoi') hanoiPointerDown(p); },
+    (p) => { if (mode === 'hanoi') hanoiPointerMove(p); },
+    (p) => {
+      if (mode === 'hanoi') { hanoiPointerUp(p); return; }
+      for (const r of regions) if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) { r.fn(); return; }
+    }
+  );
+
+  function update(dt) {
+    if (mode === '24' && tp.running && !tp.revealed) {
+      tp.timeLeft -= dt;
+      if (tp.timeLeft <= 0) {
+        tp.timeLeft = 0; tp.running = false;
+        RJ.over({ title: '时间到', sub: `共算对 ${tp.hands} 手`, score: tp.score, win: tp.hands > 0 });
+      }
+    }
+    if (mode === 'hanoi' && hz.demo && !hz.won) {
+      hz.demoTimer -= dt;
+      if (hz.demoTimer <= 0) {
+        hz.demoTimer = 0.55;
+        const mv = hz.demoQueue.shift();
+        if (mv) tryMove(mv[0], mv[1]);
+      }
+    }
+  }
+  function draw() {
+    ctx.fillStyle = '#181c33'; ctx.fillRect(0, 0, W, H);
+    if (mode === 'menu') { setPill('m1', ''); setPill('m2', ''); drawMenu(); }
+    else if (mode === '24') draw24();
+    else if (mode === 'hanoi-setup') { setPill('m1', ''); setPill('m2', ''); drawHanoiSetup(); }
+    else if (mode === 'hanoi') drawHanoi();
+  }
+  RJ.loop(update, draw);
+})();
+</script></body></html>
