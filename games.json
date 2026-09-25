@@ -45,7 +45,8 @@
   "dir": "JavaScript",
   "license": "GPL-2.0",
   "upstream": "xqbase/xqwlight",
-  "featured": true
+  "featured": true,
+  "patch": "xqwlight_index"
  },
  {
   "slug": "gobang",
@@ -115,13 +116,14 @@
  {
   "slug": "minesweeper",
   "name": "扫雷",
-  "desc": "emoji 版扫雷，长按插旗",
+  "desc": "emoji 版扫雷",
   "icon": "💣",
   "repo": "emoji-minesweeper",
   "ref": "gh-pages",
   "dir": ".",
   "license": "MIT",
-  "upstream": "muan/emoji-minesweeper"
+  "upstream": "muan/emoji-minesweeper",
+  "patch": "minesweeper"
  },
  {
   "slug": "pacman",

@@ -39,7 +39,7 @@ def sanitize_html_text(s):
     def script(m):
         attrs, body = m.group(1), m.group(2)
         src = re.search(r"\bsrc=[\"']([^\"']+)", attrs, re.I)
-        if src and TRACKER.search(src.group(1)):
+        if src and (TRACKER.search(src.group(1)) or re.search(r"\bdata-website-id=", attrs, re.I)):
             removed.append("script src=" + src.group(1))
             return ""
         if not src and INLINE_TRACKER.search(body):
@@ -121,7 +121,32 @@ def patch_hextris_ga(dest, game):
     return ["js/initialization.js: runtime Google Analytics loader + ga() calls removed"]
 
 
+def patch_minesweeper(dest, game):
+    notes = []
+    idx = dest / "index.html"
+    s = idx.read_text(encoding="utf-8")
+    s2 = s.replace('id="twemoji" checked>', 'id="twemoji">', 1).replace('id="emoji"> Native emoji', 'id="emoji" checked> Native emoji', 1)
+    assert s2 != s, "minesweeper emoji radios not found"
+    s3 = re.sub(r"\s*if \(navigator\.serviceWorker\) navigator\.serviceWorker\.register\([^)]*\)", "", s2, count=1)
+    idx.write_text(s3, encoding="utf-8")
+    notes.append("index.html: default to native emoji" + ("; service worker registration removed (hard-coded /emoji-minesweeper/ path)" if s3 != s2 else ""))
+    tw = dest / "twemoji.js"
+    t = tw.read_text(encoding="utf-8")
+    t2 = t.replace('"//twemoji.maxcdn.com/"', '"//cdn.jsdelivr.net/gh/twitter/twemoji@v1.4.2/"', 1)
+    assert t2 != t, "twemoji maxcdn base not found"
+    tw.write_text(t2, encoding="utf-8")
+    notes.append("twemoji.js: dead twemoji.maxcdn.com -> jsDelivr twitter/twemoji@v1.4.2")
+    return notes
+
+
+def patch_xqwlight_index(dest, game):
+    shutil.copyfile(dest / "index.htm", dest / "index.html")
+    return ["index.htm copied to index.html (Pages only serves index.html as directory index)"]
+
+
 PATCHES = {
+    "minesweeper": patch_minesweeper,
+    "xqwlight_index": patch_xqwlight_index,
     "hextris_ga": patch_hextris_ga,
     "mumuy_clean_index": patch_mumuy_clean_index,
     "adarkroom_mobile": patch_adarkroom_mobile,
