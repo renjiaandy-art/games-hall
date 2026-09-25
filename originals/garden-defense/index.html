@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>花园守卫</title></head><body>
+<script src="../common/rj-game.js"></script>
+<script>
+(() => {
+  'use strict';
+  const W = 640, H = 360, ROWS = 5, COLS = 8, TOPY = 10, ROWH = 54, COLW = W / COLS;
+  const CARD_Y = TOPY + ROWS * ROWH, CARD_H = H - CARD_Y, CARD_W = W / 6;
+  const BREACH_X = -14;
+
+  const PLANT = {
+    thorn: { name: '刺果炮', cost: 50, cd: 6, hp: 60, dmg: 9, atkCd: 0.9, color: '#5cae4a', shoot: true },
+    fire: { name: '烈焰果', cost: 100, cd: 11, hp: 55, dmg: 17, atkCd: 1.3, color: '#ff6a3c', shoot: true },
+    frost: { name: '冰晶菇', cost: 75, cd: 9, hp: 55, dmg: 5, atkCd: 1.1, color: '#7fd8ff', shoot: true, slow: true },
+    wall: { name: '石壳墩', cost: 60, cd: 13, hp: 240, color: '#a9825a' },
+    dew: { name: '甘露花', cost: 40, cd: 7, hp: 40, color: '#ffce4a', produce: 26, prodCd: 7.5 },
+    bomb: { name: '爆浆果', cost: 80, cd: 15, hp: 1, color: '#e0524a', fuse: 1.4, blastR: 100, blastDmg: 60 },
+  };
+  const CARD_KEYS = ['thorn', 'fire', 'frost', 'wall', 'dew', 'bomb'];
+
+  const MTYPE = {
+    imp: { name: '尖角小妖', hp: 20, speed: 34, dmg: 6, atkCd: 0.8, color: '#8a6ef0', r: 13 },
+    moss: { name: '苔藓怪', hp: 40, speed: 23, dmg: 9, atkCd: 1.0, color: '#5c9e4a', r: 15 },
+    rock: { name: '岩壳怪', hp: 78, speed: 15, dmg: 15, atkCd: 1.3, color: '#8a8f9e', r: 18 },
+    boss: { name: '巨石兽王', hp: 260, speed: 12, dmg: 26, atkCd: 1.3, color: '#c96a3c', r: 25 },
+  };
+
+  const WAVES = [
+    { mix: ['imp', 'imp', 'imp', 'imp'], interval: 1.7 },
+    { mix: ['imp', 'imp', 'moss', 'imp', 'moss'], interval: 1.55 },
+    { mix: ['imp', 'moss', 'moss', 'rock', 'imp', 'moss'], interval: 1.4 },
+    { mix: ['moss', 'rock', 'imp', 'moss', 'rock', 'imp', 'moss'], interval: 1.3 },
+    { mix: ['rock', 'rock', 'moss', 'imp', 'moss', 'rock', 'imp', 'moss'], interval: 1.2 },
+    { mix: ['imp', 'moss', 'rock', 'moss', 'rock', 'imp', 'moss', 'rock', 'boss'], interval: 1.1 },
+  ];
+
+  RJ.init({
+    id: 'garden-defense', title: '花园守卫', icon: '🌿', subtitle: '五行草坪防线，种下原创植物挡住小怪物的进攻！',
+    howto: '• 点击天上掉落的养分露珠即可收集，💛甘露花也会持续产出养分<br>• 点击底部卡片选中植物，再点击草坪格子种下（养分足够且卡片冷却完毕才能种）<br>• 🌰刺果炮/🔥烈焰果/❄️冰晶菇 会自动朝该行的怪物射击，冰晶菇附带减速；🪨石壳墩是高血量墙，🧨爆浆果种下后延时范围爆炸<br>• 共 6 波小怪物从右向左进攻，任意一行被突破防线即失败，坚持到最后即可获胜<br>• 手机建议横屏游玩，视野更开阔，竖屏也可以完整游玩',
+    onStart: () => startGame(), onRestart: () => startGame(),
+  });
+  const view = RJ.canvas(W, H), ctx = view.ctx;
+  const pill = RJ.pills(['nutrient', 'wave', 'enemy']);
+
+  let running, nutrients, plantsGrid, enemies, bullets, drops, particles, cardCd, selectedCard;
+  let waveIdx, phase, prepT, spawnT, spawnQueue, wavesCleared, kills, dropT, toastedLandscape;
+
+  function startGame() {
+    running = true; nutrients = 120; kills = 0; wavesCleared = 0;
+    plantsGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    enemies = []; bullets = []; drops = []; particles = [];
+    cardCd = {}; CARD_KEYS.forEach((k) => (cardCd[k] = 0));
+    selectedCard = null;
+    waveIdx = 0; phase = 'prep'; prepT = 3.2; spawnT = 0; spawnQueue = [];
+    dropT = 1.8;
+    RJ.toast(`准备迎战 · 第 1 / ${WAVES.length} 波`, 1800);
+    if (!toastedLandscape && 'ontouchstart' in window && window.innerHeight > window.innerWidth) {
+      toastedLandscape = true;
+      setTimeout(() => RJ.toast('提示：手机横屏视野更开阔，竖屏也能完整游玩 🔄', 2600), 1900);
+    }
+  }
+
+  function rowY(r) { return TOPY + r * ROWH + ROWH / 2; }
+  function colX(c) { return c * COLW + COLW / 2; }
+
+  function buildWaveQueue(idx) {
+    const w = WAVES[idx];
+    const rows = w.mix.map((_, i) => i % ROWS);
+    RJ.shuffle(rows);
+    return w.mix.map((type, i) => ({ type, row: rows[i] }));
+  }
+
+  function spawnEnemy(type, row) {
+    const t = MTYPE[type];
+    const hpMult = 1 + waveIdx * 0.15, spMult = 1 + waveIdx * 0.04;
+    enemies.push({ type, row, x: W + 30, y: rowY(row), hp: Math.round(t.hp * hpMult), maxHp: Math.round(t.hp * hpMult), speed: t.speed * spMult, atkT: 0, slowT: 0, target: null });
+  }
+
+  function makePlant(key, row, col) {
+    const def = PLANT[key];
+    return { key, row, col, x: colX(col), y: rowY(row), hp: def.hp, maxHp: def.hp, atkT: RJ.rand(0, 0.3), fuseT: def.fuse || 0, prodT: def.prodCd || 0 };
+  }
+
+  function spawnDrop() {
+    const c = RJ.randi(0, COLS - 1), r = RJ.randi(0, ROWS - 1);
+    drops.push({ x: colX(c) + RJ.rand(-16, 16), y: TOPY, vy: RJ.rand(34, 46), val: RJ.randi(15, 28) });
+  }
+
+  function popup(x, y, text, color) { particles.push({ x, y, t: 0, text, color: color || '#ffd23c' }); }
+  function burst(x, y, color, n) { for (let i = 0; i < (n || 8); i++) particles.push({ x, y, t: 0, a: Math.random() * 6.28, sp: RJ.rand(40, 150), color }); }
+
+  function handleTap(p) {
+    if (!running) return;
+    if (p.y >= CARD_Y) {
+      const idx = Math.floor(p.x / CARD_W);
+      const card = CARD_KEYS[idx]; if (!card) return;
+      selectedCard = selectedCard === card ? null : card;
+      RJ.sfx('move');
+      return;
+    }
+    for (let i = drops.length - 1; i >= 0; i--) {
+      const d = drops[i];
+      if (Math.hypot(p.x - d.x, p.y - d.y) < 22) {
+        nutrients += d.val; drops.splice(i, 1); RJ.sfx('coin'); popup(d.x, d.y, '+' + d.val);
+        return;
+      }
+    }
+    if (!selectedCard) return;
+    const col = Math.floor(p.x / COLW), row = Math.floor((p.y - TOPY) / ROWH);
+    if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return;
+    if (plantsGrid[row][col]) { RJ.toast('这一格已经有植物啦'); return; }
+    const def = PLANT[selectedCard];
+    if (cardCd[selectedCard] > 0) { RJ.toast('卡片冷却中'); return; }
+    if (nutrients < def.cost) { RJ.toast('养分不足'); return; }
+    nutrients -= def.cost; cardCd[selectedCard] = def.cd;
+    plantsGrid[row][col] = makePlant(selectedCard, row, col);
+    selectedCard = null; RJ.sfx('pop');
+  }
+  view.onPointer((p) => handleTap(p));
+  addEventListener('keydown', (e) => {
+    const n = +e.key;
+    if (n >= 1 && n <= 6) selectedCard = selectedCard === CARD_KEYS[n - 1] ? null : CARD_KEYS[n - 1];
+  });
+
+  function killEnemy(e) {
+    kills++; burst(e.x, e.y, MTYPE[e.type].color, 10); RJ.sfx('hit');
+    if (Math.random() < 0.22) drops.push({ x: e.x, y: e.y, vy: 40, val: RJ.randi(10, 18) });
+  }
+
+  function explodeBomb(pl) {
+    burst(pl.x, pl.y, '#ff9a5a', 16); RJ.sfx('boom');
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      if (Math.hypot(e.x - pl.x, e.y - pl.y) < PLANT.bomb.blastR) {
+        e.hp -= PLANT.bomb.blastDmg;
+        if (e.hp <= 0) { killEnemy(e); enemies.splice(i, 1); }
+      }
+    }
+  }
+
+  function endGame(win, subReason) {
+    running = false;
+    const score = kills * 10 + wavesCleared * 120 + (win ? 300 : 0);
+    RJ.over({ title: win ? '花园保卫成功！' : '花园失守了…', sub: `${subReason} · 击退 ${kills} 只怪物`, score, win });
+  }
+
+  function update(dt) {
+    particles.forEach((p) => (p.t += dt)); particles = particles.filter((p) => p.t < 0.8);
+    for (const d of drops) d.y += d.vy * dt;
+    drops = drops.filter((d) => d.y < CARD_Y);
+    if (!running) return;
+
+    for (const k of CARD_KEYS) if (cardCd[k] > 0) cardCd[k] = Math.max(0, cardCd[k] - dt);
+
+    dropT -= dt;
+    if (dropT <= 0) { spawnDrop(); dropT = RJ.rand(1.6, 2.6); }
+
+    if (phase === 'prep') {
+      prepT -= dt;
+      if (prepT <= 0) { spawnQueue = buildWaveQueue(waveIdx); spawnT = 0.4; phase = 'spawning'; }
+    } else if (phase === 'spawning') {
+      spawnT -= dt;
+      if (spawnT <= 0 && spawnQueue.length) { const s = spawnQueue.shift(); spawnEnemy(s.type, s.row); spawnT = WAVES[waveIdx].interval; }
+      if (!spawnQueue.length) phase = 'clearing';
+    } else if (phase === 'clearing') {
+      if (enemies.length === 0) {
+        wavesCleared++;
+        if (waveIdx >= WAVES.length - 1) { endGame(true, `六波怪物全部击退`); return; }
+        waveIdx++; phase = 'prep'; prepT = 5;
+        RJ.toast(`第 ${waveIdx} 波清空！准备迎战第 ${waveIdx + 1} / ${WAVES.length} 波`, 2000);
+      }
+    }
+
+    // plants: attack / produce / fuse
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const pl = plantsGrid[r][c]; if (!pl) continue;
+      const def = PLANT[pl.key];
+      if (def.shoot) {
+        pl.atkT -= dt;
+        if (pl.atkT <= 0) {
+          const target = enemies.filter((e) => e.row === r && e.x >= pl.x - 4).sort((a, b) => a.x - b.x)[0];
+          if (target) { bullets.push({ row: r, x: pl.x + 16, y: pl.y, dmg: def.dmg, slow: !!def.slow, color: def.color }); pl.atkT = def.atkCd; RJ.sfx('shoot'); }
+        }
+      }
+      if (def.produce) {
+        pl.prodT -= dt;
+        if (pl.prodT <= 0) { nutrients += def.produce; popup(pl.x, pl.y - 20, '+' + def.produce, '#ffce4a'); pl.prodT = def.prodCd; }
+      }
+      if (def.fuse) {
+        pl.fuseT -= dt;
+        if (pl.fuseT <= 0) { explodeBomb(pl); plantsGrid[r][c] = null; }
+      }
+    }
+
+    // bullets
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i]; b.x += 320 * dt;
+      if (b.x > W + 10) { bullets.splice(i, 1); continue; }
+      let hit = false;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const e = enemies[j];
+        if (e.row !== b.row) continue;
+        if (Math.abs(e.x - b.x) < MTYPE[e.type].r + 6) {
+          e.hp -= b.dmg; if (b.slow) e.slowT = 1.6;
+          hit = true;
+          if (e.hp <= 0) { killEnemy(e); enemies.splice(j, 1); }
+          break;
+        }
+      }
+      if (hit) bullets.splice(i, 1);
+    }
+
+    // enemies: move / engage / attack
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i], t = MTYPE[e.type];
+      if (e.slowT > 0) e.slowT -= dt;
+      let target = null, best = -1;
+      for (let c = 0; c < COLS; c++) {
+        const pl = plantsGrid[e.row][c];
+        if (pl && Math.abs(pl.x - e.x) < 34 && pl.x <= e.x + 6) { if (pl.x > best) { best = pl.x; target = pl; } }
+      }
+      if (target) {
+        e.atkT -= dt;
+        if (e.atkT <= 0) {
+          target.hp -= t.dmg; e.atkT = t.atkCd; RJ.sfx('bad');
+          if (target.hp <= 0) { burst(target.x, target.y, PLANT[target.key].color, 8); plantsGrid[target.row][target.col] = null; }
+        }
+      } else {
+        const spd = e.slowT > 0 ? t.speed * 0.45 : t.speed;
+        e.x -= spd * dt;
+        if (e.x < BREACH_X) { endGame(false, `第 ${e.row + 1} 行被 ${t.name} 突破`); return; }
+      }
+    }
+  }
+
+  function drawPlant(pl) {
+    const def = PLANT[pl.key];
+    ctx.save(); ctx.translate(pl.x, pl.y);
+    if (pl.key === 'wall') {
+      ctx.fillStyle = def.color; RJ.rr(ctx, -20, -22, 40, 44, 10); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-10, -14); ctx.lineTo(4, 2); ctx.moveTo(10, -16); ctx.lineTo(-2, 10); ctx.stroke();
+    } else if (pl.key === 'dew') {
+      ctx.fillStyle = '#ffe27a'; for (let a = 0; a < 6; a++) { ctx.save(); ctx.rotate(a * Math.PI / 3); ctx.beginPath(); ctx.ellipse(0, -14, 8, 14, 0, 0, 7); ctx.fill(); ctx.restore(); }
+      ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(0, 0, 9, 0, 7); ctx.fill();
+    } else if (pl.key === 'bomb') {
+      const pulse = 1 + Math.sin(performance.now() / 100) * 0.06;
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(0, 2, 17, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#5a2a1a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -15); ctx.lineTo(6, -26); ctx.stroke();
+      ctx.fillStyle = '#ffce4a'; ctx.beginPath(); ctx.arc(6, -26, 3, 0, 7); ctx.fill();
+    } else {
+      ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(0, 4, 17, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.arc(-6, -2, 6, 0, 7); ctx.fill();
+      ctx.fillStyle = '#17203f'; ctx.beginPath(); ctx.arc(-4, 2, 2.2, 0, 7); ctx.arc(4, 2, 2.2, 0, 7); ctx.fill();
+      ctx.strokeStyle = def.color; ctx.lineWidth = 8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(14, 2); ctx.lineTo(26, 2); ctx.stroke();
+    }
+    ctx.restore();
+    if (pl.hp < pl.maxHp) {
+      const bw = 34; ctx.fillStyle = 'rgba(0,0,0,.35)'; RJ.rr(ctx, pl.x - bw / 2, pl.y - 30, bw, 4, 2); ctx.fill();
+      ctx.fillStyle = '#5cff8f'; RJ.rr(ctx, pl.x - bw / 2, pl.y - 30, bw * Math.max(0, pl.hp / pl.maxHp), 4, 2); ctx.fill();
+    }
+  }
+
+  function drawEnemy(e) {
+    const t = MTYPE[e.type];
+    ctx.save(); ctx.translate(e.x, e.y);
+    if (e.slowT > 0) { ctx.fillStyle = 'rgba(127,216,255,.35)'; ctx.beginPath(); ctx.arc(0, 0, t.r + 5, 0, 7); ctx.fill(); }
+    ctx.fillStyle = t.color; ctx.beginPath(); ctx.arc(0, 0, t.r, 0, 7); ctx.fill();
+    if (e.type === 'imp') { ctx.fillStyle = t.color; ctx.beginPath(); ctx.moveTo(-6, -t.r); ctx.lineTo(-2, -t.r - 8); ctx.lineTo(2, -t.r); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(6, -t.r); ctx.lineTo(10, -t.r - 8); ctx.lineTo(2, -t.r + 2); ctx.closePath(); ctx.fill(); }
+    if (e.type === 'moss') { ctx.fillStyle = '#3f7a33'; for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(i * 8, -t.r + 2); ctx.lineTo(i * 8 + 4, -t.r - 6); ctx.lineTo(i * 8 + 8, -t.r + 2); ctx.closePath(); ctx.fill(); } }
+    if (e.type === 'rock' || e.type === 'boss') { ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-t.r * 0.4, -t.r * 0.3); ctx.lineTo(t.r * 0.2, t.r * 0.2); ctx.moveTo(t.r * 0.3, -t.r * 0.4); ctx.lineTo(-t.r * 0.1, t.r * 0.4); ctx.stroke(); }
+    ctx.fillStyle = e.type === 'boss' ? '#ffe27a' : '#17203f';
+    ctx.beginPath(); ctx.arc(-t.r * 0.35, -t.r * 0.15, 2.4, 0, 7); ctx.arc(t.r * 0.35, -t.r * 0.15, 2.4, 0, 7); ctx.fill();
+    ctx.restore();
+    const bw = t.r * 2; ctx.fillStyle = 'rgba(0,0,0,.35)'; RJ.rr(ctx, e.x - bw / 2, e.y - t.r - 12, bw, 4, 2); ctx.fill();
+    ctx.fillStyle = '#ff5a5a'; RJ.rr(ctx, e.x - bw / 2, e.y - t.r - 12, bw * Math.max(0, e.hp / e.maxHp), 4, 2); ctx.fill();
+  }
+
+  function draw() {
+    ctx.fillStyle = '#274a1e'; ctx.fillRect(0, 0, W, TOPY);
+    for (let r = 0; r < ROWS; r++) {
+      ctx.fillStyle = r % 2 === 0 ? '#4c8a3a' : '#579742';
+      ctx.fillRect(0, TOPY + r * ROWH, W, ROWH);
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.lineWidth = 1;
+    for (let c = 1; c < COLS; c++) { ctx.beginPath(); ctx.moveTo(c * COLW, TOPY); ctx.lineTo(c * COLW, TOPY + ROWS * ROWH); ctx.stroke(); }
+    for (let r = 1; r < ROWS; r++) { ctx.beginPath(); ctx.moveTo(0, TOPY + r * ROWH); ctx.lineTo(W, TOPY + r * ROWH); ctx.stroke(); }
+
+    if (selectedCard) {
+      ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2;
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (!plantsGrid[r][c]) ctx.strokeRect(c * COLW + 2, TOPY + r * ROWH + 2, COLW - 4, ROWH - 4);
+    }
+
+    for (const row of plantsGrid) for (const pl of row) if (pl) drawPlant(pl);
+    for (const b of bullets) { ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, 7); ctx.fill(); }
+    for (const e of enemies) drawEnemy(e);
+    for (const d of drops) { ctx.save(); ctx.translate(d.x, d.y); const s = Math.abs(Math.sin(performance.now() / 200 + d.x)); ctx.scale(0.6 + s * 0.3, 1); ctx.fillStyle = '#7dffb0'; ctx.beginPath(); ctx.arc(0, 0, 10, 0, 7); ctx.fill(); ctx.strokeStyle = '#2a8a55'; ctx.lineWidth = 1.4; ctx.stroke(); ctx.restore(); }
+
+    for (const p of particles) {
+      if (p.text) { ctx.globalAlpha = 1 - p.t / 0.8; ctx.fillStyle = p.color; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.text, p.x, p.y - p.t * 36); ctx.globalAlpha = 1; }
+      else { const k = p.t / 0.8; ctx.globalAlpha = 1 - k; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x + Math.cos(p.a) * p.sp * p.t, p.y + Math.sin(p.a) * p.sp * p.t, 3, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
+    }
+
+    // card bar
+    ctx.fillStyle = '#1c2b12'; ctx.fillRect(0, CARD_Y, W, CARD_H);
+    CARD_KEYS.forEach((k, i) => {
+      const def = PLANT[k], x = i * CARD_W, cdFrac = cardCd[k] / def.cd;
+      const afford = nutrients >= def.cost;
+      ctx.fillStyle = selectedCard === k ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.08)';
+      RJ.rr(ctx, x + 4, CARD_Y + 4, CARD_W - 8, CARD_H - 8, 8); ctx.fill();
+      if (selectedCard === k) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; RJ.rr(ctx, x + 4, CARD_Y + 4, CARD_W - 8, CARD_H - 8, 8); ctx.stroke(); }
+      ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(x + CARD_W / 2, CARD_Y + 24, 13, 0, 7); ctx.fill();
+      ctx.fillStyle = afford ? '#fff' : '#ff9a9a'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(def.name, x + CARD_W / 2, CARD_Y + 48);
+      ctx.fillText('💧' + def.cost, x + CARD_W / 2, CARD_Y + 62);
+      if (cdFrac > 0) { ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x + 4, CARD_Y + 4, CARD_W - 8, (CARD_H - 8) * cdFrac); }
+    });
+
+    pill('nutrient', `💧 ${nutrients}`);
+    pill('wave', `第 ${Math.min(waveIdx + 1, WAVES.length)}/${WAVES.length} 波`);
+    pill('enemy', `怪物 ${enemies.length}`);
+  }
+
+  RJ.loop(update, draw);
+  running = false; nutrients = 120; kills = 0; wavesCleared = 0;
+  plantsGrid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  enemies = []; bullets = []; drops = []; particles = []; cardCd = {}; CARD_KEYS.forEach((k) => (cardCd[k] = 0));
+  selectedCard = null; waveIdx = 0; phase = 'prep'; prepT = 3.2; spawnT = 0; spawnQueue = []; dropT = 1.8;
+})();
+</script></body></html>
