@@ -83,7 +83,7 @@
   <div id="hud">
     <a href="../">‹ 大厅</a>
     <span class="sp"></span>
-    <span class="pill" id="pillLevel">关卡 1/5</span>
+    <span class="pill" id="pillLevel">关卡 1/6</span>
     <span class="pill" id="pillTime">00:00</span>
     <span class="pill" id="pillGems">💎 0</span>
     <button id="btnRestart">重来本关</button>
@@ -111,7 +111,7 @@
     <div class="sub">双人合作平台闯关 · 建议横屏体验，竖屏也能玩</div>
     <div class="how">
       红色角色怕蓝色的水，蓝色角色怕红色的岩浆，绿色毒液两人都怕。分别收集同色宝石、踩机关开门，
-      两人都到达各自颜色的出口才能过关，共 5 关，难度递增。<br><br>
+      两人都到达各自颜色的出口才能过关，共 6 关，难度递增，需要两人配合：踩踏板开门、升降台、推方块。<br><br>
       电脑：红色用 <b>A / D</b> 移动、<b>W</b> 跳跃；蓝色用 <b>方向键 ← →</b> 移动、<b>↑</b> 跳跃。<br>
       手机：屏幕左下角控制红色，右下角控制蓝色，可两人一起握手机玩，也可一人切换操作。
     </div>
@@ -142,88 +142,331 @@
   };
   var BEST_KEY = 'fid-best-time';
 
-  var TILE = 32;
-  var GRAV = 1500, JUMP_V = -620, MOVE_SPEED = 190, MAX_FALL = 900;
-  var BOX_W = 20, BOX_H = 26;
+/*CORE-BEGIN*/
+  // ===== 纯逻辑核心（不依赖 DOM；verify.js 会抽出这一段无头运行并自动求解每一关）=====
+  var TILE = 32, GRAV = 1500, JUMP_V = -620, MOVE_SPEED = 190, MAX_FALL = 900;
+  var BOX_W = 20, BOX_H = 26, CR = 28, LIFT_H = 12, LIFT_SPEED = 90, DT = 1 / 60;
+  // 踏板 1-4 对应门 D-G（同编号的多块踏板是“或”关系，任意一块被踩即开门/升起升降台）
+  var PLATE_DOOR = { '1': 'D', '2': 'E', '3': 'F', '4': 'G' };
+  var DOOR_PLATE = { D: '1', E: '2', F: '3', G: '4' };
 
   var LEVELS = [
-    {
-      timePar: 40,
-      rows: [
-      "##########################",
-      "#........................#",
-      "#........................#",
-      "#........................#",
-      "#........................#",
-      "#........................#",
-      "#........................#",
-      "#rb...R............B...YX#",
-      "########^######~##########",
-      "##########################"
-      ]
-    },
-    {
-      timePar: 50,
-      rows: [
-      "#################################",
-      "#...............................#",
-      "#...............................#",
-      "#...............................#",
-      "#...............................#",
-      "#...............................#",
-      "#...............................#",
-      "#rb..........B................YX#",
-      "######^#########~######*#########",
-      "#################################"
-      ]
-    },
-    {
-      timePar: 65,
-      rows: [
-      "######################################",
-      "#........................D...........#",
-      "#........................D...........#",
-      "#........................D...........#",
-      "#........................D...........#",
-      "#........................D...........#",
-      "#........................D...........#",
-      "#rb..R............B...L..D.........YX#",
-      "#######^######~#############*#########",
-      "######################################"
-      ]
-    },
-    {
-      timePar: 85,
-      rows: [
-      "######################################################",
-      "#.................D......................E...........#",
-      "#.................D......................E...........#",
-      "#.................D......................E...........#",
-      "#.................D......................E...........#",
-      "#.................D......................E...........#",
-      "#.................D......................E...........#",
-      "#rb.........R..L..D................B..K..E.........YX#",
-      "#####^###############~######*###############^#########",
-      "######################################################"
-      ]
-    },
-    {
-      timePar: 110,
-      rows: [
-      "################################################################",
-      "#.................D......................E.....................#",
-      "#.................D......................E.....................#",
-      "#.................D......................E.....................#",
-      "#.................D......................E.....................#",
-      "#.................D......................E.....................#",
-      "#.................D......................E.....................#",
-      "#rb.........R..L..D................B..K..E................R..YX#",
-      "#####~###############^######*###############~######^############",
-      "################################################################"
-      ]
-    },
+    {"name":"热身:多层平台",
+      "rows":[
+      "##############################",
+      "#............................#",
+      "#............................#",
+      "#.................R.......YX.#",
+      "#...............####^^#~~###.#",
+      "#............................#",
+      "#..........RB................#",
+      "#........#####...............#",
+      "#............................#",
+      "#.rb.....B...R...............#",
+      "######~~######^^##############",
+      "##############################"
+    ]},
+    {"name":"踏板与门",
+      "rows":[
+      "####################################",
+      "#.............#....................#",
+      "#.............#....................#",
+      "#.............#...........R....YBX.#",
+      "#.............#..........###~~######",
+      "#.............#....................#",
+      "#.............#....1.B.............#",
+      "#.............#..######............#",
+      "#.............D....................#",
+      "#.rb...B...1R.D.R..................#",
+      "#####^^#~~##########################",
+      "####################################"
+    ]},
+    {"name":"升降台",
+      "rows":[
+      "########################################",
+      "#......................................#",
+      "#......................................#",
+      "#............B......3..................#",
+      "#..........#####^^#####................#",
+      "#.............#........................#",
+      "#.............#........................#",
+      "#.............#........................#",
+      "#.............F........................#",
+      "#.rb.R2.......F........R.........B.YX..#",
+      "#########..###############~~#^^#########",
+      "########################################"
+    ],"lifts":[{"plate":"2",
+      "c":9,"r":10,"w":2,"rise":6}]},
+    {"name":"推方块",
+      "rows":[
+      "##############################################",
+      "#.......D......................#.............#",
+      "#.......D......................#.............#",
+      "#.......D......................#..........YX.#",
+      "#.......D......................#......##~~####",
+      "#.......D###...................#.............#",
+      "#....R..D.C....................#....B........#",
+      "#...########...................#...#######...#",
+      "#..............................E.............#",
+      "#.rb..1........B..........2#.R.E.............#",
+      "#################^^###########################",
+      "##############################################"
+    ]},
+    {"name":"分头行动",
+      "rows":[
+      "############################################",
+      "#..........................................#",
+      "#..........................................#",
+      "#............R1...............R.3...X......#",
+      "#..........#########^^^^^^^^##############.#",
+      "#...............#................#.........#",
+      "#...............#................#.........#",
+      "#...............#................#.........#",
+      "#...............D................F.........#",
+      "#.rb..2.........D.B............B.F...Y.....#",
+      "#########..#########~~~~~~~~################",
+      "############################################"
+    ],"lifts":[{"plate":"2",
+      "c":9,"r":10,"w":2,"rise":6}]},
+    {"name":"终章:冰火合璧",
+      "rows":[
+      "################################################",
+      "#..............#...............................#",
+      "#..............#...............................#",
+      "#..............#.........R3..........R4..X.....#",
+      "#..............#.......#######^^^^^^#########..#",
+      "#..............#............#..........#.......#",
+      "#..............#............#..........#.......#",
+      "#..............#............#..........#.......#",
+      "#..............D............F..........G.......#",
+      "#.rb..R.C.B.1#.D..2.........F....B.....GB.Y....#",
+      "#####################..#######~~~~~~############",
+      "################################################"
+    ],"lifts":[{"plate":"2",
+      "c":21,"r":10,"w":2,"rise":6}]}
   ];
 
+  function parseLevel(cfg) {
+    var rows = cfg.rows, lv = { name: cfg.name, rows: rows, nr: rows.length, nc: rows[0].length,
+      plates: [], doorTiles: [], crates: [], lifts: [], fireSpawn: null, iceSpawn: null };
+    for (var r = 0; r < lv.nr; r++) {
+      for (var c = 0; c < lv.nc; c++) {
+        var ch = rows[r][c];
+        if (ch === 'r') lv.fireSpawn = [c, r];
+        else if (ch === 'b') lv.iceSpawn = [c, r];
+        else if (ch === 'C') lv.crates.push([c, r]);
+        else if (DOOR_PLATE[ch]) lv.doorTiles.push({ c: c, r: r, ch: ch });
+        else if (PLATE_DOOR[ch]) lv.plates.push({ c: c, r: r, id: ch });
+      }
+    }
+    (cfg.lifts || []).forEach(function (l) {
+      lv.lifts.push({ plate: l.plate, x: l.c * TILE, w: l.w * TILE, y0: l.r * TILE, y1: l.r * TILE - l.rise * TILE });
+    });
+    return lv;
+  }
+
+  function newState(lv) {
+    var grid = lv.rows.map(function (r) { return r.split('').map(function (ch) {
+      return (ch === 'r' || ch === 'b' || ch === 'C' || PLATE_DOOR[ch]) ? '.' : ch; }); });
+    function ent(p) { return { x: p[0] * TILE + (TILE - BOX_W) / 2, y: p[1] * TILE + (TILE - BOX_H), vx: 0, vy: 0, grounded: false, done: false, w: BOX_W, h: BOX_H }; }
+    var s = { lv: lv, grid: grid, fire: ent(lv.fireSpawn), ice: ent(lv.iceSpawn),
+      crates: lv.crates.map(function (p) { return { x: p[0] * TILE + 2, y: p[1] * TILE + TILE - CR, vx: 0, vy: 0, grounded: false, w: CR, h: CR }; }),
+      lifts: lv.lifts.map(function (l) { return { y: l.y0 }; }),
+      doorOpen: { D: false, E: false, F: false, G: false }, pressed: {},
+      gems: 0, dead: false, won: false, jpF: false, jpI: false, sfx: [], own: true };
+    updateMech(s);
+    return s;
+  }
+
+  function cloneState(s) {
+    function cb(b) { var o = {}; for (var k in b) o[k] = b[k]; return o; }
+    return { lv: s.lv, own: false, grid: s.grid, fire: cb(s.fire), ice: cb(s.ice),
+      crates: s.crates.map(cb), lifts: s.lifts.map(cb), doorOpen: cb(s.doorOpen), pressed: cb(s.pressed),
+      gems: s.gems, dead: s.dead, won: s.won, jpF: s.jpF, jpI: s.jpI, sfx: [] };
+  }
+
+  function overlap(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+  function tileAt(s, r, c) {
+    if (r < 0 || r >= s.lv.nr || c < 0 || c >= s.lv.nc) return '#';
+    return s.grid[r][c];
+  }
+  function entSolid(s, ch, who) {
+    if (ch === '#') return true;
+    if (DOOR_PLATE[ch]) return !s.doorOpen[ch];
+    if (ch === '^') return who === 'fire';
+    if (ch === '~') return who === 'ice';
+    return false;
+  }
+  function crateSolid(s, ch) {
+    return ch === '#' || ch === '^' || ch === '~' || ch === '*' || (DOOR_PLATE[ch] && !s.doorOpen[ch]);
+  }
+  function deadly(ch, who) {
+    return ch === '*' || (ch === '^' && who === 'ice') || (ch === '~' && who === 'fire');
+  }
+  function liftRects(s) {
+    return s.lv.lifts.map(function (l, i) { return { x: l.x, y: s.lifts[i].y, w: l.w, h: LIFT_H }; });
+  }
+
+  function resolveTiles(s, b, axis, who) {
+    for (var pass = 0; pass < 3; pass++) {
+      var minCol = Math.floor(b.x / TILE), maxCol = Math.floor((b.x + b.w - 0.01) / TILE);
+      var minRow = Math.floor(b.y / TILE), maxRow = Math.floor((b.y + b.h - 0.01) / TILE);
+      var hit = false;
+      for (var r = minRow; r <= maxRow && !hit; r++) {
+        for (var c = minCol; c <= maxCol && !hit; c++) {
+          var ch = tileAt(s, r, c);
+          if (!(who ? entSolid(s, ch, who) : crateSolid(s, ch))) continue;
+          var tx = c * TILE, ty = r * TILE;
+          if (axis === 'x') {
+            if (b.vx > 0) { b.x = tx - b.w; b.vx = 0; hit = true; }
+            else if (b.vx < 0) { b.x = tx + TILE; b.vx = 0; hit = true; }
+          } else {
+            if (b.vy > 0) { b.y = ty - b.h; b.vy = 0; b.grounded = true; hit = true; }
+            else if (b.vy < 0) { b.y = ty + TILE; b.vy = 0; hit = true; }
+          }
+        }
+      }
+      if (!hit) break;
+    }
+  }
+  function resolveRects(b, axis, rects) {
+    for (var i = 0; i < rects.length; i++) {
+      var rc = rects[i];
+      if (rc === b || !overlap(b, rc)) continue;
+      if (axis === 'x') {
+        if (b.vx > 0) { b.x = rc.x - b.w; b.vx = 0; }
+        else if (b.vx < 0) { b.x = rc.x + rc.w; b.vx = 0; }
+      } else {
+        if (b.vy > 0) { b.y = rc.y - b.h; b.vy = 0; b.grounded = true; }
+        else if (b.vy < 0) { b.y = rc.y + rc.h; b.vy = 0; }
+      }
+    }
+  }
+
+  // 推方块：返回方块实际移动量
+  function crateMoveX(s, c, dx, pusher) {
+    var ox = c.x;
+    c.x += dx; c.vx = dx;
+    resolveTiles(s, c, 'x', null);
+    var others = liftRects(s).concat(s.crates.filter(function (k) { return k !== c; }));
+    [s.fire, s.ice].forEach(function (e) { if (e !== pusher) others.push(e); });
+    resolveRects(c, 'x', others);
+    c.vx = 0;
+    return c.x - ox;
+  }
+
+  function updateMech(s) {
+    var bodies = [s.fire, s.ice].concat(s.crates);
+    var pressed = {};
+    s.lv.plates.forEach(function (p) {
+      var rc = { x: p.c * TILE + 2, y: p.r * TILE + 20, w: TILE - 4, h: 12 };
+      for (var i = 0; i < bodies.length; i++) if (overlap(bodies[i], rc)) { pressed[p.id] = true; break; }
+    });
+    s.pressed = pressed;
+    ['D', 'E', 'F', 'G'].forEach(function (d) {
+      var open = !!pressed[DOOR_PLATE[d]];
+      if (!open && s.doorOpen[d]) {  // 门洞里有东西时不关门，避免卡死
+        s.lv.doorTiles.forEach(function (t) {
+          if (t.ch !== d) return;
+          var rc = { x: t.c * TILE, y: t.r * TILE, w: TILE, h: TILE };
+          for (var i = 0; i < bodies.length; i++) if (overlap(bodies[i], rc)) open = true;
+        });
+      }
+      s.doorOpen[d] = open;
+    });
+  }
+
+  function updateLifts(s) {
+    s.lv.lifts.forEach(function (l, i) {
+      var st = s.lifts[i];
+      var target = s.pressed[l.plate] ? l.y1 : l.y0;
+      var dy = target - st.y;
+      if (dy === 0) return;
+      var sp = LIFT_SPEED * DT;
+      dy = Math.max(-sp, Math.min(sp, dy));
+      var cur = { x: l.x, y: st.y, w: l.w, h: LIFT_H };
+      var nxt = { x: l.x, y: st.y + dy, w: l.w, h: LIFT_H };
+      var bodies = [s.fire, s.ice].concat(s.crates);
+      var riders = [], blocked = false;
+      bodies.forEach(function (b) {
+        var onTop = Math.abs(b.y + b.h - st.y) <= 1.5 && b.x < cur.x + cur.w && b.x + b.w > cur.x;
+        if (onTop) riders.push(b); else if (overlap(nxt, b)) blocked = true;
+      });
+      if (blocked) return;
+      st.y += dy;
+      riders.forEach(function (b) { b.y += dy; });
+    });
+  }
+
+  function touchTiles(s, e, fn) {
+    var minCol = Math.floor(e.x / TILE), maxCol = Math.floor((e.x + e.w - 0.01) / TILE);
+    var minRow = Math.floor(e.y / TILE), maxRow = Math.floor((e.y + e.h - 0.01) / TILE);
+    for (var r = minRow; r <= maxRow; r++) for (var c = minCol; c <= maxCol; c++) { if (fn(r, c, tileAt(s, r, c))) return true; }
+    return false;
+  }
+
+  function stepEntity(s, e, who, inp) {
+    if (e.done) return;
+    var jumpEdge, key = who === 'fire' ? 'jpF' : 'jpI';
+    jumpEdge = inp.j && !s[key]; s[key] = inp.j;
+    var dx = inp.l ? -MOVE_SPEED : (inp.r ? MOVE_SPEED : 0);
+    e.vx = dx * DT;
+    var dir = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+    e.x += e.vx;
+    resolveTiles(s, e, 'x', who);
+    resolveRects(e, 'x', liftRects(s));
+    for (var i = 0; i < s.crates.length && dir; i++) {
+      var c = s.crates[i];
+      if (!overlap(e, c)) continue;
+      var need = dir > 0 ? (e.x + e.w - c.x) : (e.x - (c.x + c.w));
+      crateMoveX(s, c, need, e);
+      if (overlap(e, c)) e.x = dir > 0 ? c.x - e.w : c.x + c.w;
+    }
+    if (dir) e.dir = dir;
+    e.vx = 0;
+    e.vy = Math.min(e.vy + GRAV * DT, MAX_FALL);
+    var wasGrounded = e.grounded;
+    if (jumpEdge && wasGrounded) { e.vy = JUMP_V; s.sfx.push('jump'); }
+    e.grounded = false;
+    // vy 以 px/s 存储，位移乘 DT
+    e.y += e.vy * DT;
+    resolveTiles(s, e, 'y', who);
+    resolveRects(e, 'y', liftRects(s).concat(s.crates));
+    if (touchTiles(s, e, function (r, c, ch) { return deadly(ch, who); })) { s.dead = true; return; }
+    touchTiles(s, e, function (r, c, ch) {
+      if ((ch === 'R' && who === 'fire') || (ch === 'B' && who === 'ice')) {
+        if (!s.own) { s.grid = s.grid.map(function (row) { return row.slice(); }); s.own = true; } // 写时复制
+        s.grid[r][c] = '.'; s.gems++; s.sfx.push('coin');
+      }
+      else if ((ch === 'X' && who === 'fire') || (ch === 'Y' && who === 'ice')) { e.done = true; e.vx = 0; e.vy = 0; }
+      return false;
+    });
+  }
+
+  function stepCrate(s, c) {
+    c.vy = Math.min(c.vy + GRAV * DT, MAX_FALL);
+    c.grounded = false;
+    c.y += c.vy * DT;
+    resolveTiles(s, c, 'y', null);
+    resolveRects(c, 'y', liftRects(s).concat(s.crates.filter(function (k) { return k !== c; }), [s.fire, s.ice]));
+  }
+
+  // inF / inI: {l,r,j}
+  function step(s, inF, inI) {
+    s.sfx.length = 0;
+    updateMech(s);
+    updateLifts(s);
+    stepEntity(s, s.fire, 'fire', inF);
+    if (!s.dead) stepEntity(s, s.ice, 'ice', inI);
+    if (s.dead) return s;
+    s.crates.forEach(function (c) { stepCrate(s, c); });
+    updateMech(s);
+    if (s.fire.done && s.ice.done) s.won = true;
+    return s;
+  }
+/*CORE-END*/
+
+  var VIEW_COLS = 16; // 视口固定 16 格宽，更宽的关卡用镜头横向滚动
   var cv = document.getElementById('cv');
   var ctx = cv.getContext('2d');
   var stage = document.getElementById('stage');
@@ -234,175 +477,33 @@
   var pillTime = document.getElementById('pillTime');
   var pillGems = document.getElementById('pillGems');
 
-  var levelIdx = 0;
-  var cols = 0, rows = 0;
-  var grid = [];            // mutable working grid (array of arrays of chars)
-  var origRows = [];        // original template for this level (immutable)
-  var doorsOpen = { D: false, E: false };
-  var fire, ice;
-  var elapsed = 0;
-  var totalElapsed = 0;
-  var gemsThisLevel = 0;
-  var totalGems = 0;
-  var running = false;
-  var levelDone = false;
-  var rafId = null;
-  var lastT = 0;
-  var deathFlashT = 0;
+  var PARSED = LEVELS.map(parseLevel);
+  var levelIdx = 0, S = null;
+  var elapsed = 0, totalElapsed = 0, totalGems = 0, gemsAcc = 0;
+  var running = false, levelDone = false, rafId = null, lastT = 0, acc = 0, deathFlashT = 0;
 
   var input = {
     fireLeft: false, fireRight: false, fireJump: false,
     iceLeft: false, iceRight: false, iceJump: false
   };
-  var prevJump = { fire: false, ice: false };
-
-  function tileAt(r, c) {
-    if (r < 0 || r >= rows || c < 0 || c >= cols) return '#';
-    return grid[r][c];
-  }
-  function setTile(r, c, ch) { if (r >= 0 && r < rows && c >= 0 && c < cols) grid[r][c] = ch; }
-
-  function isSolidFor(ch, who) {
-    if (ch === '#') return true;
-    if (ch === 'D') return !doorsOpen.D;
-    if (ch === 'E') return !doorsOpen.E;
-    if (ch === '^') return who === 'fire';
-    if (ch === '~') return who === 'ice';
-    return false;
-  }
-  function isDeadlyFor(ch, who) {
-    if (ch === '^') return who === 'ice';
-    if (ch === '~') return who === 'fire';
-    if (ch === '*') return true;
-    return false;
-  }
-
-  function makeEntity(col, row) {
-    return { x: col * TILE + (TILE - BOX_W) / 2, y: row * TILE + (TILE - BOX_H), vx: 0, vy: 0, grounded: false, done: false };
-  }
 
   function loadLevel(i) {
     levelIdx = i;
-    var cfg = LEVELS[i];
-    origRows = cfg.rows;
-    rows = origRows.length;
-    cols = origRows[0].length;
-    resetGridState();
+    S = newState(PARSED[i]);
+    elapsed = 0; levelDone = false; acc = 0;
+    updateGemsPill();
     pillLevel.textContent = '关卡 ' + (i + 1) + '/' + LEVELS.length;
-    showToast('第 ' + (i + 1) + ' 关', 900);
+    showToast('第 ' + (i + 1) + ' 关 · ' + LEVELS[i].name, 1400);
     fitCanvas();
   }
-
-  function resetGridState() {
-    grid = origRows.map(function (r) { return r.split(''); });
-    doorsOpen = { D: false, E: false };
-    var fCol = 0, fRow = 0, iCol = 0, iRow = 0;
-    for (var r = 0; r < rows; r++) {
-      for (var c = 0; c < cols; c++) {
-        if (grid[r][c] === 'r') { fCol = c; fRow = r; grid[r][c] = '.'; }
-        else if (grid[r][c] === 'b') { iCol = c; iRow = r; grid[r][c] = '.'; }
-      }
-    }
-    fire = makeEntity(fCol, fRow);
-    ice = makeEntity(iCol, iRow);
-    gemsThisLevel = 0;
-    updateGemsPill();
-    elapsed = 0;
-    levelDone = false;
-  }
-
-  function updateGemsPill() { pillGems.textContent = '💎 ' + gemsThisLevel; }
-
-  function getInput(who) {
-    if (who === 'fire') return { left: input.fireLeft, right: input.fireRight, jump: input.fireJump };
-    return { left: input.iceLeft, right: input.iceRight, jump: input.iceJump };
-  }
-
-  function resolveAxis(e, axis, who) {
-    for (var pass = 0; pass < 3; pass++) {
-      var left = e.x, top = e.y, right = e.x + BOX_W, bottom = e.y + BOX_H;
-      var minCol = Math.floor(left / TILE), maxCol = Math.floor((right - 0.01) / TILE);
-      var minRow = Math.floor(top / TILE), maxRow = Math.floor((bottom - 0.01) / TILE);
-      var hit = false;
-      for (var r = minRow; r <= maxRow && !hit; r++) {
-        for (var c = minCol; c <= maxCol && !hit; c++) {
-          var ch = tileAt(r, c);
-          if (!isSolidFor(ch, who)) continue;
-          var tx = c * TILE, ty = r * TILE;
-          if (axis === 'x') {
-            if (e.vx > 0) { e.x = tx - BOX_W; e.vx = 0; hit = true; }
-            else if (e.vx < 0) { e.x = tx + TILE; e.vx = 0; hit = true; }
-          } else {
-            if (e.vy > 0) { e.y = ty - BOX_H; e.vy = 0; e.grounded = true; hit = true; }
-            else if (e.vy < 0) { e.y = ty + TILE; e.vy = 0; hit = true; }
-          }
-        }
-      }
-      if (!hit) break;
-    }
-  }
-
-  function checkHazards(e, who) {
-    var minCol = Math.floor(e.x / TILE), maxCol = Math.floor((e.x + BOX_W - 0.01) / TILE);
-    var minRow = Math.floor(e.y / TILE), maxRow = Math.floor((e.y + BOX_H - 0.01) / TILE);
-    for (var r = minRow; r <= maxRow; r++) {
-      for (var c = minCol; c <= maxCol; c++) {
-        if (isDeadlyFor(tileAt(r, c), who)) { onDeath(); return true; }
-      }
-    }
-    return false;
-  }
-
-  function checkPickups(e, who) {
-    var minCol = Math.floor(e.x / TILE), maxCol = Math.floor((e.x + BOX_W - 0.01) / TILE);
-    var minRow = Math.floor(e.y / TILE), maxRow = Math.floor((e.y + BOX_H - 0.01) / TILE);
-    for (var r = minRow; r <= maxRow; r++) {
-      for (var c = minCol; c <= maxCol; c++) {
-        var ch = tileAt(r, c);
-        if (ch === 'R' && who === 'fire') { setTile(r, c, '.'); gemsThisLevel++; totalGems++; updateGemsPill(); RJSfx('coin'); }
-        else if (ch === 'B' && who === 'ice') { setTile(r, c, '.'); gemsThisLevel++; totalGems++; updateGemsPill(); RJSfx('coin'); }
-        else if (ch === 'L') { if (!doorsOpen.D) RJSfx('pop'); doorsOpen.D = true; }
-        else if (ch === 'K') { if (!doorsOpen.E) RJSfx('pop'); doorsOpen.E = true; }
-      }
-    }
-  }
-
-  function checkExit(e, who) {
-    var minCol = Math.floor(e.x / TILE), maxCol = Math.floor((e.x + BOX_W - 0.01) / TILE);
-    var minRow = Math.floor(e.y / TILE), maxRow = Math.floor((e.y + BOX_H - 0.01) / TILE);
-    for (var r = minRow; r <= maxRow; r++) {
-      for (var c = minCol; c <= maxCol; c++) {
-        var ch = tileAt(r, c);
-        if (ch === 'X' && who === 'fire') { e.done = true; e.vx = 0; e.vy = 0; }
-        if (ch === 'Y' && who === 'ice') { e.done = true; e.vx = 0; e.vy = 0; }
-      }
-    }
-  }
-
-  function stepEntity(e, who, dt) {
-    if (e.done || levelDone) return;
-    var inp = getInput(who);
-    var jumpEdge = inp.jump && !prevJump[who];
-    prevJump[who] = inp.jump;
-    e.vx = inp.left ? -MOVE_SPEED : (inp.right ? MOVE_SPEED : 0);
-    e.x += e.vx * dt;
-    resolveAxis(e, 'x', who);
-    e.vy = Math.min(e.vy + GRAV * dt, MAX_FALL);
-    if (jumpEdge && e.grounded) { e.vy = JUMP_V; e.grounded = false; RJSfx('jump'); }
-    e.grounded = false;
-    e.y += e.vy * dt;
-    resolveAxis(e, 'y', who);
-    if (checkHazards(e, who)) return;
-    checkPickups(e, who);
-    checkExit(e, who);
-  }
+  function restartLevel() { S = newState(PARSED[levelIdx]); levelDone = false; acc = 0; updateGemsPill(); }
+  function updateGemsPill() { pillGems.textContent = '💎 ' + (S.gems); }
 
   function onDeath() {
-    if (levelDone) return;
     RJSfx('bad');
     showToast('💥 阵亡！重新开始本关', 1000);
     deathFlashT = 0.35;
-    resetGridState();
+    restartLevel();
   }
 
   function onLevelWin() {
@@ -410,9 +511,10 @@
     running = false;
     cancelAnimationFrame(rafId);
     totalElapsed += elapsed;
+    totalGems += S.gems;
     var isLast = levelIdx === LEVELS.length - 1;
     document.getElementById('winTitle').textContent = isLast ? '🏆 全部通关！' : '🎉 关卡完成！';
-    document.getElementById('winSub').textContent = '关卡 ' + (levelIdx + 1) + ' · 用时 ' + fmtTime(elapsed) + ' · 收集 ' + gemsThisLevel + ' 颗宝石';
+    document.getElementById('winSub').textContent = '关卡 ' + (levelIdx + 1) + ' · 用时 ' + fmtTime(elapsed) + ' · 收集 ' + S.gems + ' 颗宝石';
     document.getElementById('winStat').textContent = fmtTime(elapsed);
     var btnNext = document.getElementById('btnNext');
     var btnBack = document.getElementById('btnBackHome');
@@ -445,12 +547,11 @@
     showToast._t = setTimeout(function () { toastEl.classList.remove('on'); }, ms || 1200);
   }
 
-  var VIEW_COLS = 14; // fixed viewport width in tiles; wider levels scroll via a camera instead of shrinking
-
   function fitCanvas() {
+    var lv = PARSED[levelIdx];
     var r = stage.getBoundingClientRect();
-    var viewCols = Math.min(VIEW_COLS, cols);
-    var logicalW = viewCols * TILE, logicalH = rows * TILE;
+    var viewCols = Math.min(VIEW_COLS, lv.nc);
+    var logicalW = viewCols * TILE, logicalH = lv.nr * TILE;
     var s = Math.min((r.width - 8) / logicalW, (r.height - 8) / logicalH);
     var dpr = Math.min(window.devicePixelRatio || 1, 3);
     cv.style.width = Math.floor(logicalW * s) + 'px'; cv.style.height = Math.floor(logicalH * s) + 'px';
@@ -468,6 +569,8 @@
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
+
+  var PCOL = { '1': '#ffd35c', '2': '#c07bff', '3': '#ff7ac8', '4': '#5fe3d0' };
 
   function drawTile(ch, x, y, t) {
     if (ch === '#') {
@@ -504,24 +607,6 @@
         var gy = y + 8 + j * 8;
         ctx.beginPath(); ctx.arc(gx, gy, 3, 0, Math.PI * 2); ctx.fill();
       }
-    } else if (ch === 'D' || ch === 'E') {
-      var open = ch === 'D' ? doorsOpen.D : doorsOpen.E;
-      var color = ch === 'D' ? '#ffd35c' : '#c07bff';
-      if (open) {
-        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.4;
-        ctx.strokeRect(x + 3, y + 3, TILE - 6, TILE - 6);
-        ctx.globalAlpha = 1;
-      } else {
-        ctx.fillStyle = color; ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = 'rgba(0,0,0,.25)';
-        for (var dy = 4; dy < TILE; dy += 8) ctx.fillRect(x, y + dy, TILE, 2);
-      }
-    } else if (ch === 'L' || ch === 'K') {
-      var on = ch === 'L' ? doorsOpen.D : doorsOpen.E;
-      var lc = ch === 'L' ? '#ffd35c' : '#c07bff';
-      ctx.fillStyle = '#555b7a'; ctx.fillRect(x + TILE * 0.3, y + TILE * 0.55, TILE * 0.4, TILE * 0.45);
-      ctx.fillStyle = on ? lc : 'rgba(255,255,255,.4)';
-      ctx.beginPath(); ctx.arc(x + TILE / 2, y + TILE * 0.45, 6, 0, Math.PI * 2); ctx.fill();
     } else if (ch === 'R' || ch === 'B') {
       var col = ch === 'R' ? '#ff5a5a' : '#4fb2ff';
       ctx.save();
@@ -546,8 +631,47 @@
     }
   }
 
+  function drawDoor(ch, x, y) {
+    var open = S.doorOpen[ch], color = PCOL[DOOR_PLATE[ch]];
+    if (open) {
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.35;
+      ctx.strokeRect(x + 3, y + 3, TILE - 6, TILE - 6);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = color; ctx.fillRect(x, y, TILE, TILE);
+      ctx.fillStyle = 'rgba(0,0,0,.25)';
+      for (var dy = 4; dy < TILE; dy += 8) ctx.fillRect(x, y + dy, TILE, 2);
+    }
+  }
+
+  function drawPlate(p) {
+    var x = p.c * TILE, y = p.r * TILE, on = !!S.pressed[p.id], color = PCOL[p.id];
+    var h = on ? 4 : 9;
+    ctx.fillStyle = '#555b7a'; ctx.fillRect(x + 1, y + TILE - 5, TILE - 2, 5);
+    ctx.fillStyle = color; rr(x + 4, y + TILE - 5 - h, TILE - 8, h, 3); ctx.fill();
+    if (on) { ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.fillRect(x + 6, y + TILE - 5 - h, TILE - 12, 2); }
+  }
+
+  function drawLift(l, st, t) {
+    var color = PCOL[l.plate];
+    // 导轨
+    ctx.fillStyle = 'rgba(255,255,255,.07)';
+    ctx.fillRect(l.x + 4, l.y1, l.w - 8, l.y0 - l.y1 + LIFT_H);
+    ctx.fillStyle = color; rr(l.x, st.y, l.w, LIFT_H, 4); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.28)';
+    for (var xx = l.x + 6; xx < l.x + l.w - 6; xx += 10) ctx.fillRect(xx, st.y + 4, 5, 4);
+    ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.fillRect(l.x + 3, st.y + 1, l.w - 6, 2);
+  }
+
+  function drawCrate(c) {
+    ctx.fillStyle = '#b07a3c'; rr(c.x, c.y, c.w, c.h, 3); ctx.fill();
+    ctx.strokeStyle = '#6e4519'; ctx.lineWidth = 2; ctx.strokeRect(c.x + 2, c.y + 2, c.w - 4, c.h - 4);
+    ctx.beginPath(); ctx.moveTo(c.x + 3, c.y + 3); ctx.lineTo(c.x + c.w - 3, c.y + c.h - 3);
+    ctx.moveTo(c.x + c.w - 3, c.y + 3); ctx.lineTo(c.x + 3, c.y + c.h - 3); ctx.stroke();
+  }
+
   function drawChar(e, kind) {
-    var cx = e.x + BOX_W / 2, cy = e.y + BOX_H / 2;
+    var cx = e.x + e.w / 2, cy = e.y + e.h / 2;
     var baseColor = kind === 'fire' ? '#ff5a3c' : '#3ca8ff';
     var darkColor = kind === 'fire' ? '#c8300f' : '#0a5fb0';
     ctx.save();
@@ -556,7 +680,6 @@
     g.addColorStop(0, baseColor); g.addColorStop(1, darkColor);
     ctx.fillStyle = g;
     rr(-BOX_W / 2, -BOX_H / 2, BOX_W, BOX_H, 8); ctx.fill();
-    // head accessory
     ctx.fillStyle = baseColor;
     if (kind === 'fire') {
       ctx.beginPath();
@@ -568,8 +691,7 @@
       ctx.quadraticCurveTo(-6, -BOX_H / 2, 0, -BOX_H / 2 - 9);
       ctx.closePath(); ctx.fill();
     }
-    // eyes
-    var dir = e.vx > 5 ? 1 : (e.vx < -5 ? -1 : 0);
+    var dir = e.dir || 0;
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(-4 + dir, -2, 3.2, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(4 + dir, -2, 3.2, 0, Math.PI * 2); ctx.fill();
@@ -577,7 +699,7 @@
     ctx.beginPath(); ctx.arc(-4 + dir * 1.6, -2, 1.5, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(4 + dir * 1.6, -2, 1.5, 0, Math.PI * 2); ctx.fill();
     if (e.done) {
-      ctx.fillStyle = 'rgba(255,255,255,.5)';
+      ctx.fillStyle = 'rgba(255,255,255,.7)';
       ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('✓', 0, BOX_H / 2 + 10);
     }
@@ -585,10 +707,11 @@
   }
 
   function draw(t) {
+    var lv = S.lv, cols = lv.nc, rows = lv.nr;
     var viewCols = Math.min(VIEW_COLS, cols);
     var viewW = viewCols * TILE, logicalH = rows * TILE;
     var levelW = cols * TILE;
-    var midX = (fire.x + ice.x) / 2 + BOX_W / 2;
+    var midX = (S.fire.x + S.ice.x) / 2 + BOX_W / 2;
     var camX = Math.max(0, Math.min(levelW - viewW, midX - viewW / 2));
     ctx.clearRect(0, 0, viewW, logicalH);
     ctx.fillStyle = '#171a2c';
@@ -599,13 +722,17 @@
     var maxCol = Math.min(cols - 1, Math.ceil((camX + viewW) / TILE) + 1);
     for (var r = 0; r < rows; r++) {
       for (var c = minCol; c <= maxCol; c++) {
-        var ch = grid[r][c];
-        if (ch === '.') continue;
-        drawTile(ch, c * TILE, r * TILE, t);
+        var ch = S.grid[r][c];
+        if (ch !== '.') drawTile(ch, c * TILE, r * TILE, t);
+        var orig = lv.rows[r][c];
+        if (DOOR_PLATE[orig]) drawDoor(orig, c * TILE, r * TILE);
       }
     }
-    drawChar(fire, 'fire');
-    drawChar(ice, 'ice');
+    lv.plates.forEach(drawPlate);
+    lv.lifts.forEach(function (l, i) { drawLift(l, S.lifts[i], t); });
+    S.crates.forEach(drawCrate);
+    drawChar(S.fire, 'fire');
+    drawChar(S.ice, 'ice');
     ctx.restore();
     if (deathFlashT > 0) {
       ctx.fillStyle = 'rgba(255,40,40,' + (deathFlashT / 0.35 * 0.35) + ')';
@@ -616,18 +743,26 @@
   function tick(tMs) {
     if (!running) return;
     var t = tMs / 1000;
-    var dt = lastT ? Math.min(0.033, t - lastT) : 0;
+    var dt = lastT ? Math.min(0.1, t - lastT) : 0;
     lastT = t;
     if (!levelDone) {
-      elapsed += dt;
+      acc += dt;
+      var inF = { l: input.fireLeft, r: input.fireRight, j: input.fireJump };
+      var inI = { l: input.iceLeft, r: input.iceRight, j: input.iceJump };
+      while (acc >= DT && !levelDone) {
+        acc -= DT;
+        elapsed += DT;
+        step(S, inF, inI);
+        for (var i = 0; i < S.sfx.length; i++) RJSfx(S.sfx[i]);
+        if (S.sfx.indexOf('coin') >= 0) updateGemsPill();
+        if (S.dead) { onDeath(); break; }
+        if (S.won) { onLevelWin(); break; }
+      }
       pillTime.textContent = fmtTime(elapsed);
-      stepEntity(fire, 'fire', dt);
-      stepEntity(ice, 'ice', dt);
-      if (fire.done && ice.done) onLevelWin();
     }
     if (deathFlashT > 0) deathFlashT = Math.max(0, deathFlashT - dt);
-    draw(t);
-    rafId = requestAnimationFrame(tick);
+    if (running || levelDone) draw(t);
+    if (running) rafId = requestAnimationFrame(tick);
   }
 
   function startLevel(i) {
@@ -709,11 +844,12 @@
     startOv.classList.add('on');
   });
   document.getElementById('btnRestart').addEventListener('click', function () {
-    if (!rows) return;
-    resetGridState();
+    if (!S || !running) return;
+    restartLevel();
   });
 
 })();
+
 </script>
 </body>
 </html>
